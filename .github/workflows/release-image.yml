@@ -9,7 +9,7 @@ on:
       infra_branch:
         description: "Infra repo branch to update with the new image tag"
         required: false
-        default: "aws_apprunner"
+        default: "main"
 
 permissions:
   contents: read
@@ -20,7 +20,7 @@ env:
   AWS_GITHUB_ACTIONS_ROLE_ARN: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
   ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'ssvd-report-store-prod' }}
   INFRA_REPOSITORY: sruthishtechnologies/ssvd-report-store-infra-ops
-  INFRA_BRANCH: ${{ inputs.infra_branch || vars.INFRA_BRANCH || 'aws_apprunner' }}
+  INFRA_BRANCH: ${{ inputs.infra_branch || vars.INFRA_BRANCH || 'main' }}
 
 jobs:
   release:

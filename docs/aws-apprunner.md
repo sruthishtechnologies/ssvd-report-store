@@ -1,5 +1,7 @@
 # AWS App Runner Deployment
 
+This path is kept for reference only. The active AWS deployment path is `docs/aws-ec2-docker.md` because this AWS account could not create App Runner services.
+
 This branch prepares SSVD Report Store for AWS App Runner with AWS-native storage:
 
 - App Runner runs the Node.js container and provides the public HTTPS URL.
