@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SSVD Report Store</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="login-view" id="loginView">
+      <section class="login-panel">
+        <div class="login-brand">
+          <img src="/srisatvam-logo.png" alt="Sri SatVam logo">
+          <div>
+            <p>SSVD Report Store</p>
+            <h1>Secure Reports</h1>
+          </div>
+        </div>
+        <form id="loginForm" class="login-form">
+          <label>
+            <span>User name</span>
+            <input id="username" autocomplete="username" required>
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit">Login</button>
+          <button id="showRegister" class="secondary-button" type="button">Register</button>
+          <p id="loginError" class="login-error" role="alert"></p>
+        </form>
+        <form id="registerForm" class="login-form register-form" hidden>
+          <label>
+            <span>Name</span>
+            <input id="registerName" autocomplete="name">
+          </label>
+          <label>
+            <span>Phone number</span>
+            <input id="registerPhone" inputmode="tel" autocomplete="tel">
+          </label>
+          <label>
+            <span>Email ID</span>
+            <input id="registerEmail" type="email" autocomplete="email">
+          </label>
+          <button type="submit">Submit Registration</button>
+          <button id="showLogin" class="secondary-button" type="button">Back to Login</button>
+          <p id="registerMessage" class="login-error" role="status"></p>
+        </form>
+      </section>
+    </main>
+
+    <main class="app-view" id="appView" hidden>
+      <section class="main-panel">
+        <div id="customNoticeTicker" class="custom-notice-ticker" role="status" hidden>
+          <div class="custom-notice-track">
+            <span id="customNoticeText"></span>
+            <span id="customNoticeTextRepeat"></span>
+          </div>
+        </div>
+        <div id="portalDownTicker" class="portal-down-ticker" role="status" hidden>
+          <div class="portal-down-track">
+            <span>Official Bhoomi portal is down. Bhoomi-dependent reports are not able to fetch data right now. Please try other reports or try again after some time.</span>
+            <span>Official Bhoomi portal is down. Bhoomi-dependent reports are not able to fetch data right now. Please try other reports or try again after some time.</span>
+          </div>
+        </div>
+        <header class="topbar">
+          <div class="topbar-left">
+            <div class="main-menu-wrap">
+            <button id="mainMenuButton" class="main-menu-button" type="button" aria-expanded="false" aria-controls="mainMenuPanel">Menu</button>
+            <button id="adminButton" class="main-menu-button admin-button" type="button" hidden>Admin</button>
+            <div id="mainMenuPanel" class="main-menu-panel" hidden></div>
+          </div>
+            <div class="app-brand">
+              <img src="/srisatvam-logo.png" alt="Sri SatVam logo">
+              <div>
+                <p class="eyebrow">Sri SatVam Technologies</p>
+                <h1>SSVD Report Store</h1>
+              </div>
+            </div>
+          </div>
+          <div class="top-actions">
+            <div class="status-pill" id="status">Starting...</div>
+            <button id="logout" class="logout-button" type="button">Logout</button>
+          </div>
+        </header>
+
+        <section class="workspace-strip">
+          <div>
+            <p class="eyebrow">Main Menu</p>
+            <h2 id="activeWorkspaceName">Full Legal Report</h2>
+          </div>
+          <span id="activeWorkspaceHint">Complete legal report workspace with all fetched service tabs.</span>
+        </section>
+
+        <section class="land-panel" id="landPanel">
+          <div class="section-title">
+            <h2>Land Details</h2>
+            <span>Select once, then fetch all service data</span>
+          </div>
+          <form id="recordForm" class="land-form">
+            <label for="district">
+              <span>District</span>
+              <select id="district" required></select>
+            </label>
+            <label for="taluk">
+              <span>Taluk</span>
+              <select id="taluk" required></select>
+            </label>
+            <label for="hobli">
+              <span>Hobli</span>
+              <select id="hobli" required></select>
+            </label>
+            <label for="village">
+              <span>Village</span>
+              <select id="village" required></select>
+            </label>
+            <label for="survey">
+              <span>Survey number</span>
+              <input id="survey" inputmode="numeric" maxlength="4" placeholder="133" required>
+            </label>
+            <button id="go" type="button">Load Surnoc</button>
+            <label for="surnoc">
+              <span>Surnoc</span>
+              <select id="surnoc" required></select>
+            </label>
+            <label for="hissa">
+              <span>Hissa No</span>
+              <select id="hissa" required></select>
+            </label>
+            <label for="period" class="visually-hidden">
+              <span>Period</span>
+              <select id="period"></select>
+            </label>
+            <button id="fetchReport" type="submit">Fetch Data</button>
+          </form>
+        </section>
+
+        <section class="report-surface" id="reportSurface">
+          <div class="report-head">
+            <div>
+              <p class="eyebrow">All Services</p>
+              <h2 id="activeReportName">Full Legal Report</h2>
+            </div>
+            <div class="report-actions">
+              <button id="exportData" type="button" disabled>Export Data</button>
+              <button id="saveReport" type="button">Save Report</button>
+              <button id="savedReports" type="button">Saved Reports</button>
+              <button id="downloadFolder" type="button">Download Folder</button>
+              <button id="print" type="button">Print Report</button>
+            </div>
+          </div>
+          <nav id="reportMenu" class="service-tabs" aria-label="Service tabs"></nav>
+          <div id="reportOutput" class="report-output"></div>
+        </section>
+      </section>
+    </main>
+    <div id="printOutput" class="print-output" aria-hidden="true"></div>
+    <div id="portalStatusDialog" class="portal-dialog" role="dialog" aria-modal="true" aria-labelledby="portalStatusTitle" hidden>
+      <div class="portal-dialog-card">
+        <h2 id="portalStatusTitle">Bhoomi Portal Not Available</h2>
+        <p id="portalStatusMessage">Bhoomi portal is not working at this moment. Please try other reports or try again after some time.</p>
+        <button id="portalStatusOk" type="button">OK</button>
+      </div>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
