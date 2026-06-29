@@ -1030,7 +1030,7 @@ async function renderHtmlPdf(html = "", filename = "SriSatVam_Land_Report.pdf") 
           <base href="${xmlEscape(baseUrl)}">
           <style>${css}</style>
           <style>
-            body { background: #fff !important; }
+            body { background: #fff !important; font-family: "Noto Sans Kannada", "Lohit Kannada", Arial, sans-serif !important; }
             .autogen-download-action, .report-actions, .service-tabs { display: none !important; }
             .print-document { width: 100%; }
             img, .report-image, .current-rtc-page, .mr-extract-page, .rtc-crop-frame img { display: block !important; }

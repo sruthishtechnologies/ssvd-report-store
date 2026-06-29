@@ -8,6 +8,11 @@ ENV PORT=3000
 ENV PLAYWRIGHT_MODULE_URL=playwright
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends fontconfig fonts-noto-core fonts-indic \
+  && fc-cache -f \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY package*.json ./
 RUN npm install --omit=dev
 
