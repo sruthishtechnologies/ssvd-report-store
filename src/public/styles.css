@@ -694,18 +694,19 @@ body.village-workspace #go {
 
 .autogen-step-list {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
   padding: 0;
-  margin: 14px 0 0;
+  margin: 10px 0 0;
   list-style: none;
 }
 
 .autogen-step {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   background: #fff;
-  padding: 10px;
+  min-height: 52px;
+  padding: 7px 8px;
 }
 
 .autogen-step strong,
@@ -714,10 +715,16 @@ body.village-workspace #go {
 }
 
 .autogen-step span {
-  margin-top: 4px;
+  margin-top: 3px;
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.72rem;
   font-weight: 700;
+  line-height: 1.18;
+}
+
+.autogen-step strong {
+  font-size: 0.78rem;
+  line-height: 1.16;
 }
 
 .autogen-step.is-running {
@@ -1304,7 +1311,7 @@ th {
   }
 
   .autogen-step-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .score-summary-grid {
@@ -1346,7 +1353,7 @@ th {
   }
 
   .autogen-step-list {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .score-summary-grid,
