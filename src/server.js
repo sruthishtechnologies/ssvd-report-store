@@ -32,7 +32,7 @@ function loadLocalEnv() {
 loadLocalEnv();
 
 const PORT = Number(process.env.PORT || 3000);
-const HOST = process.env.HOST || "127.0.0.1";
+const HOST = process.env.HOST || (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(ROOT, "public");
 const APPLE_VISION_OCR_SCRIPT = join(ROOT, "tools", "apple-vision-ocr.swift");
@@ -61,10 +61,16 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
 const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || OPENAI_MODEL;
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-5";
 const ANTHROPIC_VERSION = "2023-06-01";
-const PLAYWRIGHT_MODULE_URL = "file:///Users/salavala/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs";
-const CHROME_EXECUTABLE_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const ADMIN_USERNAME = "admin";
-const ADMIN_PASSWORD = "SriSatVam@999";
+const PLAYWRIGHT_MODULE_URL = process.env.PLAYWRIGHT_MODULE_URL || (process.env.NODE_ENV === "production" ? "playwright" : "file:///Users/salavala/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs");
+const CHROME_EXECUTABLE_PATH = process.env.CHROME_EXECUTABLE_PATH || (process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "");
+let ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+let ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "SriSatVam@999";
+const AWS_REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ap-south-1";
+const AWS_STORAGE_MODE = process.env.STORAGE_MODE || (process.env.AWS_DYNAMODB_TABLE && process.env.AWS_S3_BUCKET ? "aws" : "local");
+const AWS_DYNAMODB_TABLE = process.env.AWS_DYNAMODB_TABLE || "";
+const AWS_S3_BUCKET = process.env.AWS_S3_BUCKET || "";
+const AWS_S3_PREFIX = (process.env.AWS_S3_PREFIX || "ssvd-report-store").replace(/^\/+|\/+$/g, "");
+const AWS_SECRETS_ID = process.env.AWS_SECRETS_ID || "";
 const REPORT_WORKSPACES = [
   { id: "fullLegalReport", name: "Full Legal Report" },
   { id: "landAutoGenReport", name: "Land AutoGen Report" },
@@ -89,6 +95,76 @@ const sessions = new Map();
 const documents = new Map();
 let officialProxyDispatcher;
 let playwrightChromiumPromise;
+let s3ClientPromise;
+let dynamoDocumentPromise;
+let secretsClientPromise;
+
+function awsStorageEnabled() {
+  return AWS_STORAGE_MODE === "aws" && Boolean(AWS_DYNAMODB_TABLE && AWS_S3_BUCKET);
+}
+
+async function getS3Client() {
+  s3ClientPromise ||= import("@aws-sdk/client-s3").then(({ S3Client }) => new S3Client({ region: AWS_REGION }));
+  return s3ClientPromise;
+}
+
+async function getDynamoDocument() {
+  dynamoDocumentPromise ||= Promise.all([
+    import("@aws-sdk/client-dynamodb"),
+    import("@aws-sdk/lib-dynamodb"),
+  ]).then(([{ DynamoDBClient }, { DynamoDBDocumentClient }]) => (
+    DynamoDBDocumentClient.from(new DynamoDBClient({ region: AWS_REGION }))
+  ));
+  return dynamoDocumentPromise;
+}
+
+async function getSecretsClient() {
+  secretsClientPromise ||= import("@aws-sdk/client-secrets-manager").then(({ SecretsManagerClient }) => new SecretsManagerClient({ region: AWS_REGION }));
+  return secretsClientPromise;
+}
+
+async function loadAwsSecrets() {
+  if (!AWS_SECRETS_ID) return;
+  const [{ GetSecretValueCommand }, client] = await Promise.all([
+    import("@aws-sdk/client-secrets-manager"),
+    getSecretsClient(),
+  ]);
+  const response = await client.send(new GetSecretValueCommand({ SecretId: AWS_SECRETS_ID }));
+  const secret = response.SecretString ? JSON.parse(response.SecretString) : {};
+  for (const [key, value] of Object.entries(secret)) {
+    if (value !== undefined && value !== null && process.env[key] === undefined) process.env[key] = String(value);
+  }
+  ADMIN_USERNAME = process.env.ADMIN_USERNAME || ADMIN_USERNAME;
+  ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ADMIN_PASSWORD;
+}
+
+function dynamoKey(pk, sk) {
+  return { pk, sk };
+}
+
+async function dynamoGet(pk, sk) {
+  const [{ GetCommand }, doc] = await Promise.all([import("@aws-sdk/lib-dynamodb"), getDynamoDocument()]);
+  const result = await doc.send(new GetCommand({
+    TableName: AWS_DYNAMODB_TABLE,
+    Key: dynamoKey(pk, sk),
+  }));
+  return result.Item;
+}
+
+async function dynamoPut(item) {
+  const [{ PutCommand }, doc] = await Promise.all([import("@aws-sdk/lib-dynamodb"), getDynamoDocument()]);
+  await doc.send(new PutCommand({
+    TableName: AWS_DYNAMODB_TABLE,
+    Item: {
+      ...item,
+      updatedAt: new Date().toISOString(),
+    },
+  }));
+}
+
+function s3Key(...parts) {
+  return [AWS_S3_PREFIX, ...parts.map((part) => safeName(part, "item"))].filter(Boolean).join("/");
+}
 
 function withReportTimeout(promise, timeoutMs, message) {
   let timeoutId;
@@ -851,6 +927,14 @@ async function chromium() {
   return playwrightChromiumPromise;
 }
 
+function browserLaunchOptions() {
+  return {
+    headless: true,
+    ...(CHROME_EXECUTABLE_PATH ? { executablePath: CHROME_EXECUTABLE_PATH } : {}),
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  };
+}
+
 function officialMrImageHtml(rowHtml = [], title = "") {
   return `<!doctype html>
     <html>
@@ -911,10 +995,7 @@ function officialMrFullImageHtml(html = "", baseUrl = MR_EXTRACT_URL) {
 
 async function storeHtmlScreenshot(html, filename) {
   const browserType = await chromium();
-  const browser = await browserType.launch({
-    headless: true,
-    executablePath: CHROME_EXECUTABLE_PATH,
-  });
+  const browser = await browserType.launch(browserLaunchOptions());
   try {
     const page = await browser.newPage({ viewport: { width: 2400, height: 1200 }, deviceScaleFactor: 1 });
     await page.setContent(html, { waitUntil: "load" });
@@ -937,10 +1018,7 @@ function safePdfFilename(filename = "") {
 
 async function renderHtmlPdf(html = "", filename = "SriSatVam_Land_Report.pdf") {
   const browserType = await chromium();
-  const browser = await browserType.launch({
-    headless: true,
-    executablePath: CHROME_EXECUTABLE_PATH,
-  });
+  const browser = await browserType.launch(browserLaunchOptions());
   try {
     const css = await readFile(join(PUBLIC_DIR, "styles.css"), "utf8");
     const page = await browser.newPage();
@@ -2328,13 +2406,65 @@ function chooseAkarbandSelection(entries, values) {
 
 function storeDocument(buffer, contentType, filename) {
   const id = randomUUID();
+  const safeFilename = filename.replace(/[^\w.-]+/g, "-");
+  const key = s3Key("documents", id, safeFilename);
   documents.set(id, {
     buffer,
     contentType,
-    filename: filename.replace(/[^\w.-]+/g, "-"),
+    filename: safeFilename,
+    s3Key: key,
     createdAt: Date.now(),
   });
+  persistDocument(id).catch((error) => console.warn(`S3 document persistence failed for ${id}: ${error.message}`));
   return `/api/document/${id}`;
+}
+
+async function persistDocument(id) {
+  if (!awsStorageEnabled()) return;
+  const document = documents.get(id);
+  if (!document) return;
+  const [{ PutObjectCommand }, s3] = await Promise.all([import("@aws-sdk/client-s3"), getS3Client()]);
+  await s3.send(new PutObjectCommand({
+    Bucket: AWS_S3_BUCKET,
+    Key: document.s3Key,
+    Body: document.buffer,
+    ContentType: document.contentType,
+  }));
+  await dynamoPut({
+    pk: "DOC",
+    sk: id,
+    id,
+    s3Key: document.s3Key,
+    filename: document.filename,
+    contentType: document.contentType,
+    createdAt: document.createdAt,
+  });
+}
+
+async function streamToBuffer(body) {
+  if (!body) return Buffer.alloc(0);
+  if (Buffer.isBuffer(body)) return body;
+  const chunks = [];
+  for await (const chunk of body) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
+async function loadStoredDocument(id) {
+  if (!awsStorageEnabled()) return null;
+  const metadata = await dynamoGet("DOC", id);
+  if (!metadata?.s3Key) return null;
+  const [{ GetObjectCommand }, s3] = await Promise.all([import("@aws-sdk/client-s3"), getS3Client()]);
+  const response = await s3.send(new GetObjectCommand({
+    Bucket: AWS_S3_BUCKET,
+    Key: metadata.s3Key,
+  }));
+  return {
+    buffer: await streamToBuffer(response.Body),
+    contentType: metadata.contentType || response.ContentType || "application/octet-stream",
+    filename: metadata.filename || "document",
+    s3Key: metadata.s3Key,
+    createdAt: metadata.createdAt || Date.now(),
+  };
 }
 
 function runCommand(command, args, timeoutMs = 12000) {
@@ -4721,6 +4851,10 @@ function savedReportPath(username = "", id = "") {
 }
 
 async function readSavedReportsIndex(username = "") {
+  if (awsStorageEnabled()) {
+    const item = await dynamoGet(`USER#${safeName(username, "guest")}`, "SAVED_REPORT_INDEX");
+    return Array.isArray(item?.reports) ? item.reports : [];
+  }
   try {
     const parsed = JSON.parse(await readFile(savedReportsIndexPath(username), "utf8"));
     return Array.isArray(parsed.reports) ? parsed.reports : [];
@@ -4730,9 +4864,40 @@ async function readSavedReportsIndex(username = "") {
 }
 
 async function writeSavedReportsIndex(username = "", reports = []) {
+  if (awsStorageEnabled()) {
+    await dynamoPut({
+      pk: `USER#${safeName(username, "guest")}`,
+      sk: "SAVED_REPORT_INDEX",
+      reports,
+    });
+    return;
+  }
   const indexPath = savedReportsIndexPath(username);
   await mkdir(dirname(indexPath), { recursive: true });
   await writeFile(indexPath, JSON.stringify({ reports }, null, 2));
+}
+
+async function readSavedReport(username = "", id = "") {
+  if (awsStorageEnabled()) {
+    const item = await dynamoGet(`USER#${safeName(username, "guest")}`, `SAVED_REPORT#${safeName(id, "report")}`);
+    if (!item) throw new Error("Saved report not found.");
+    return item.report;
+  }
+  return JSON.parse(await readFile(savedReportPath(username, id), "utf8"));
+}
+
+async function writeSavedReport(username = "", id = "", report = {}) {
+  if (awsStorageEnabled()) {
+    await dynamoPut({
+      pk: `USER#${safeName(username, "guest")}`,
+      sk: `SAVED_REPORT#${safeName(id, "report")}`,
+      report,
+    });
+    return;
+  }
+  const reportPath = savedReportPath(username, id);
+  await mkdir(dirname(reportPath), { recursive: true });
+  await writeFile(reportPath, JSON.stringify(report, null, 2));
 }
 
 function savedReportSummary(id, name, state) {
@@ -4960,6 +5125,21 @@ function defaultAdminStore() {
 }
 
 async function readAdminStore() {
+  if (awsStorageEnabled()) {
+    const item = await dynamoGet("CONFIG", "ADMIN_STORE");
+    const parsed = item?.store || defaultAdminStore();
+    const roles = Array.isArray(parsed.roles) && parsed.roles.length ? parsed.roles : defaultAdminStore().roles;
+    const allReportsRole = roles.find((role) => role.id === "role-all-reports");
+    if (allReportsRole) allReportsRole.workspaceIds = REPORT_WORKSPACES.map((workspace) => workspace.id);
+    return {
+      ...defaultAdminStore(),
+      ...parsed,
+      users: Array.isArray(parsed.users) ? parsed.users : [],
+      registrations: Array.isArray(parsed.registrations) ? parsed.registrations : [],
+      roles,
+      notice: parsed.notice || { enabled: false, message: "" },
+    };
+  }
   try {
     const parsed = JSON.parse(await readFile(ADMIN_STORE_PATH, "utf8"));
     const roles = Array.isArray(parsed.roles) && parsed.roles.length ? parsed.roles : defaultAdminStore().roles;
@@ -4979,6 +5159,14 @@ async function readAdminStore() {
 }
 
 async function writeAdminStore(store) {
+  if (awsStorageEnabled()) {
+    await dynamoPut({
+      pk: "CONFIG",
+      sk: "ADMIN_STORE",
+      store,
+    });
+    return;
+  }
   await mkdir(dirname(ADMIN_STORE_PATH), { recursive: true });
   await writeFile(ADMIN_STORE_PATH, JSON.stringify(store, null, 2));
 }
@@ -5194,6 +5382,8 @@ async function handleApi(req, res) {
         ok: true,
         service: "Namma Bhoomi Report",
         proxyConfigured: Boolean(OFFICIAL_PROXY_URL),
+        storageMode: awsStorageEnabled() ? "aws-s3-dynamodb" : "local-files",
+        awsRegion: AWS_REGION,
       });
       return;
     }
@@ -5205,7 +5395,7 @@ async function handleApi(req, res) {
 
     if (req.method === "GET" && req.url?.startsWith("/api/document/")) {
       const id = decodeURIComponent(req.url.split("/").pop() || "");
-      const document = documents.get(id);
+      const document = documents.get(id) || await loadStoredDocument(id);
       if (!document) {
         res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         res.end("Document expired");
@@ -5231,9 +5421,7 @@ async function handleApi(req, res) {
         savedAt: new Date().toISOString(),
       };
       const summary = savedReportSummary(id, name, state);
-      const reportPath = savedReportPath(username, id);
-      await mkdir(dirname(reportPath), { recursive: true });
-      await writeFile(reportPath, JSON.stringify({ ...summary, state }, null, 2));
+      await writeSavedReport(username, id, { ...summary, state });
       const reports = (await readSavedReportsIndex(username)).filter((item) => item.id !== id);
       reports.unshift(summary);
       await writeSavedReportsIndex(username, reports);
@@ -5253,7 +5441,7 @@ async function handleApi(req, res) {
       const username = registrationUsername(body.username || "guest") || "guest";
       const id = safeName(body.id || "", "");
       if (!id) throw new Error("Saved report id is required.");
-      const saved = JSON.parse(await readFile(savedReportPath(username, id), "utf8"));
+      const saved = await readSavedReport(username, id);
       json(res, 200, saved);
       return;
     }
@@ -5266,18 +5454,11 @@ async function handleApi(req, res) {
       if (!files.length) throw new Error("No report data is available to archive.");
       const buffer = zipStored(files);
       const filename = `${name}.zip`;
-      const documentId = randomUUID();
-      documents.set(documentId, {
-        buffer,
-        contentType: "application/zip",
-        filename,
-        createdAt: Date.now(),
-      });
       json(res, 200, {
         ok: true,
         filename,
         files: files.length,
-        downloadUrl: `/api/document/${documentId}`,
+        downloadUrl: storeDocument(buffer, "application/zip", filename),
       });
       return;
     }
@@ -5287,22 +5468,18 @@ async function handleApi(req, res) {
       if (!body.payload || typeof body.payload !== "object") throw new Error("Export payload is missing.");
       const filename = safeExportFilename(body.filename);
       const exportJson = JSON.stringify(body.payload, null, 2);
-      await mkdir(EXPORT_DIR, { recursive: true });
-      const filePath = join(EXPORT_DIR, filename);
-      await writeFile(filePath, exportJson);
-
-      const documentId = randomUUID();
-      documents.set(documentId, {
-        buffer: Buffer.from(exportJson),
-        contentType: "application/json; charset=utf-8",
-        filename,
-      });
+      let storedPath = "";
+      if (!awsStorageEnabled()) {
+        await mkdir(EXPORT_DIR, { recursive: true });
+        storedPath = join(EXPORT_DIR, filename);
+        await writeFile(storedPath, exportJson);
+      }
 
       json(res, 200, {
         ok: true,
         filename,
-        storedPath: filePath,
-        downloadUrl: `/api/document/${documentId}`,
+        storedPath: storedPath || `s3://${AWS_S3_BUCKET}/${s3Key("documents", filename)}`,
+        downloadUrl: storeDocument(Buffer.from(exportJson), "application/json; charset=utf-8", filename),
         savedAt: new Date().toISOString(),
       });
       return;
@@ -5493,6 +5670,13 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`SSVD Report Store running at http://${HOST}:${PORT}`);
-});
+try {
+  await loadAwsSecrets();
+  server.listen(PORT, HOST, () => {
+    console.log(`SSVD Report Store running at http://${HOST}:${PORT}`);
+    console.log(`Storage mode: ${awsStorageEnabled() ? "aws-s3-dynamodb" : "local-files"}`);
+  });
+} catch (error) {
+  console.error(`Startup failed: ${error.message}`);
+  process.exitCode = 1;
+}
