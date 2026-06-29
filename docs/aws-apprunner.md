@@ -35,6 +35,47 @@ Health check path:
 /api/health
 ```
 
+## Automated Release Workflow
+
+The app repo includes `.github/workflows/release-image.yml`.
+
+On push to `main`, it:
+
+1. Builds the Docker image.
+2. Validates `src/server.js` and `src/public/app.js` inside the image.
+3. Pushes `<app-commit-sha>` and `latest` tags to ECR.
+4. Updates the infra repo file `terraform/image.auto.tfvars` with:
+
+```hcl
+image_tag = "<app-commit-sha>"
+```
+
+5. Pushes that infra commit, which triggers the infra deploy workflow and updates App Runner.
+
+Required app repo secrets:
+
+```text
+AWS_GITHUB_ACTIONS_ROLE_ARN=<github actions deploy role arn>
+INFRA_REPO_TOKEN=<classic PAT or fine-grained token with contents:write on infra repo>
+```
+
+If not using OIDC, add these instead of `AWS_GITHUB_ACTIONS_ROLE_ARN`:
+
+```text
+AWS_ACCESS_KEY_ID=<deploy access key>
+AWS_SECRET_ACCESS_KEY=<deploy secret key>
+```
+
+Optional app repo variables:
+
+```text
+AWS_REGION=ap-south-1
+ECR_REPOSITORY=ssvd-report-store-prod
+INFRA_BRANCH=main
+```
+
+For branch testing before merge, keep `INFRA_BRANCH=aws_apprunner`.
+
 ## Runtime Environment Variables
 
 The infra repo injects:

@@ -1,0 +1,93 @@
+name: Build and Promote App Image
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      infra_branch:
+        description: "Infra repo branch to update with the new image tag"
+        required: false
+        default: "aws_apprunner"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  AWS_GITHUB_ACTIONS_ROLE_ARN: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'ssvd-report-store-prod' }}
+  INFRA_REPOSITORY: sruthishtechnologies/ssvd-report-store-infra-ops
+  INFRA_BRANCH: ${{ inputs.infra_branch || vars.INFRA_BRANCH || 'aws_apprunner' }}
+
+jobs:
+  release:
+    name: Build image, push to ECR, update infra
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout app repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials with OIDC
+        if: ${{ env.AWS_GITHUB_ACTIONS_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure AWS credentials with access keys
+        if: ${{ env.AWS_GITHUB_ACTIONS_ROLE_ARN == '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify ECR repository exists
+        run: aws ecr describe-repositories --repository-names "$ECR_REPOSITORY"
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build app image
+        run: |
+          docker build \
+            -t "${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${GITHUB_SHA}" \
+            -t "${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:latest" \
+            .
+
+      - name: Validate app image
+        run: |
+          docker run --rm "${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${GITHUB_SHA}" node --check src/server.js
+          docker run --rm "${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${GITHUB_SHA}" node --check src/public/app.js
+
+      - name: Push app image
+        run: |
+          docker push "${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+          docker push "${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:latest"
+
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.INFRA_REPOSITORY }}
+          ref: ${{ env.INFRA_BRANCH }}
+          path: infra
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+
+      - name: Commit desired image tag to infra repo
+        working-directory: infra
+        run: |
+          printf 'image_tag = "%s"\n' "${GITHUB_SHA}" > terraform/image.auto.tfvars
+          git config user.name "ssvd-release-bot"
+          git config user.email "actions@github.com"
+          git add terraform/image.auto.tfvars
+          if git diff --cached --quiet; then
+            echo "Infra already points to ${GITHUB_SHA}"
+            exit 0
+          fi
+          git commit -m "Deploy app image ${GITHUB_SHA}"
+          git push origin "HEAD:${INFRA_BRANCH}"
