@@ -1,5 +1,7 @@
 # AWS Fargate Deployment
 
+For the lower-cost App Runner path, use `docs/aws-apprunner.md`.
+
 This branch prepares SSVD Report Store for quick production on AWS:
 
 - ECS Fargate runs the Node.js container.
