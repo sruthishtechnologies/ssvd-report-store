@@ -1359,6 +1359,10 @@ function xmlEscape(value = "") {
     .replace(/"/g, "&quot;");
 }
 
+function htmlEscape(value = "") {
+  return xmlEscape(value).replace(/'/g, "&#39;");
+}
+
 function wrapSvgText(value, maxChars = 42) {
   const words = String(value ?? "-").replace(/\s+/g, " ").trim().split(" ");
   const lines = [];
@@ -4728,6 +4732,248 @@ async function fetchDownloadRtcsReport(values) {
   };
 }
 
+const AUTO_GEN_SERVICE_STEPS = [
+  { id: "rtcDetails", title: "RTC Details", status: "Fetch RTC Details", type: "fullLegal", sections: ["currentRtc", "oldRtc"] },
+  { id: "mutationReport", title: "Mutation Report", status: "Fetch Mutation Report", type: "fullLegal", sections: ["mutationRecords", "mutationStatus", "ownershipMap"] },
+  { id: "ownersChangeLog", title: "Owners Change Log", status: "Fetch Owners Change Log", type: "fullLegal", sections: ["currentRtc", "oldRtc"] },
+  { id: "akarband", title: "Akarband", status: "Fetch Akarband", type: "fullLegal", sections: ["akarband"] },
+  { id: "kathaExtract", title: "Katha Extract", status: "Fetch Katha Extract", type: "fullLegal", sections: ["khatha", "advancedDetails"] },
+  { id: "echawadi", title: "eChawadi Report", status: "Fetch eChawadi Report", type: "fullLegal", sections: ["echawadi"] },
+  { id: "reviewPoints", title: "Review Points", status: "Generate Review Points", type: "fullLegal", sections: ["advancedDetails", "mutationStatus", "ownershipMap", "echawadi"] },
+  { id: "downloadRtcs", title: "RTC Downloads & Scan", status: "Download RTCs", type: "downloadRtcs" },
+  { id: "mrDownloader", title: "MR Downloader", status: "Download MR Extracts", type: "mrDownloader" },
+  { id: "scanRtcs", title: "Scan RTCs", status: "Prepare Scan RTCs", type: "scanRtcs" },
+  { id: "kathaValidation", title: "Katha Validation", status: "Validate Katha", type: "kathaValidation" },
+  { id: "villageScan", title: "Village Scan", status: "Fetch Village Scan", type: "villageScan" },
+];
+
+function autoGenOverview(values = {}) {
+  return {
+    district: values.districtLabel || values.district || "",
+    taluk: values.talukLabel || values.taluk || "",
+    hobli: values.hobliLabel || values.hobli || "",
+    village: values.villageLabel || values.village || "",
+    survey: values.survey || "",
+    surnoc: values.surnocLabel || values.surnoc || "",
+    hissa: values.hissaLabel || values.hissa || "",
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function autoGenFileName(values = {}) {
+  const safe = (value, fallback) => safeName(String(value || "").trim() || fallback, fallback);
+  return `SriSatVam_${safe(values.villageLabel || values.village, "Village")}_${safe(values.survey, "Survey")}_${safe(values.hissaLabel || values.hissa, "Hissa")}.pdf`;
+}
+
+async function fetchAutoGenStep(step, values) {
+  if (step.type === "fullLegal") return buildReport({ ...values, sections: step.sections });
+  if (step.type === "downloadRtcs") {
+    return withReportTimeout(
+      fetchDownloadRtcsReport(values),
+      OLD_RTC_TASK_TIMEOUT_MS,
+      "Download RTCs took too long. Please try again.",
+    );
+  }
+  if (step.type === "mrDownloader") {
+    return withReportTimeout(
+      fetchMrDownloaderReport(values),
+      OLD_RTC_TASK_TIMEOUT_MS,
+      "MR Downloader took too long. Please try again.",
+    );
+  }
+  if (step.type === "scanRtcs") {
+    return withReportTimeout(
+      fetchScanRtcsReport(values),
+      OLD_RTC_TASK_TIMEOUT_MS + 180000,
+      "Scan RTCs took too long. Please try again.",
+    );
+  }
+  if (step.type === "kathaValidation") {
+    return withReportTimeout(
+      fetchKathaValidationReport(values),
+      REPORT_TASK_TIMEOUT_MS,
+      "Katha Validation took too long. Please try again.",
+    );
+  }
+  if (step.type === "villageScan") {
+    return withReportTimeout(
+      fetchVillageScanReport(values),
+      REPORT_TASK_TIMEOUT_MS,
+      "Village Scan took too long. Please try again.",
+    );
+  }
+  throw new Error(`Unknown AutoGen step: ${step.title}`);
+}
+
+function rowsHtml(rows = []) {
+  if (!Array.isArray(rows) || !rows.length) return "";
+  return `
+    <table class="wide-table compact-autogen-table">
+      <tbody>
+        ${rows.slice(0, 60).map((row) => `
+          <tr>${(Array.isArray(row) ? row : [row]).map((cell) => `<td>${htmlEscape(cell || "-")}</td>`).join("")}</tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function recordHtml(record = {}) {
+  const title = record.label || record.title || record.name || "Record";
+  const image = record.imageUrl || record.previewUrl || record.pdfPreviewUrl || "";
+  return `
+    <section class="autogen-record">
+      <h4>${htmlEscape(title)}</h4>
+      ${record.summary?.text ? `<p>${htmlEscape(record.summary.text)}</p>` : ""}
+      ${rowsHtml(record.summary?.rows)}
+      ${image ? `<img class="report-image current-rtc-page" src="${htmlEscape(image)}" alt="${htmlEscape(title)}">` : ""}
+      ${record.attachmentError || record.error ? `<p class="error-card">${htmlEscape(record.attachmentError || record.error)}</p>` : ""}
+    </section>
+  `;
+}
+
+function genericTableHtml(table = {}) {
+  if (!Array.isArray(table.rows) || !table.rows.length) return "";
+  const header = Array.isArray(table.header) ? table.header : [];
+  return `
+    <table class="wide-table compact-autogen-table">
+      ${header.length ? `<thead><tr>${header.map((cell) => `<th>${htmlEscape(cell)}</th>`).join("")}</tr></thead>` : ""}
+      <tbody>
+        ${table.rows.slice(0, 120).map((row) => `
+          <tr>${(Array.isArray(row) ? row : [row]).map((cell) => `<td>${htmlEscape(cell || "-")}</td>`).join("")}</tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function sectionHtml(section = {}) {
+  return `
+    <section class="summary-block autogen-api-section">
+      <div class="section-title">
+        <h3>${htmlEscape(section.title || "Section")}</h3>
+        <span>${htmlEscape(section.status || "")}</span>
+      </div>
+      ${section.error ? `<p class="error-card">${htmlEscape(section.error)}</p>` : ""}
+      ${genericTableHtml(section.table)}
+      ${genericTableHtml(section.keyMatrix)}
+      ${genericTableHtml(section.keyValueTable)}
+      ${(section.sections || []).map(sectionHtml).join("")}
+      ${(section.records || []).slice(0, 80).map(recordHtml).join("")}
+      ${section.records?.length > 80 ? `<p>${htmlEscape(`${section.records.length - 80} more records included in JSON response.`)}</p>` : ""}
+    </section>
+  `;
+}
+
+function autoGenStepHtml(step = {}) {
+  if (step.state === "failed") {
+    return `
+      <section class="print-section">
+        <h2>${htmlEscape(step.title)}</h2>
+        <p class="error-card">${htmlEscape(step.error || step.message || "Step failed")}</p>
+      </section>
+    `;
+  }
+  return `
+    <section class="print-section">
+      <h2>${htmlEscape(step.title)}</h2>
+      ${step.data?.overview ? rowsHtml(Object.entries(step.data.overview).map(([key, value]) => [key, value])) : ""}
+      ${genericTableHtml(step.data?.table)}
+      ${(step.data?.sections || []).map(sectionHtml).join("")}
+      ${(step.data?.records || []).slice(0, 80).map(recordHtml).join("")}
+      ${step.data?.records?.length > 80 ? `<p>${htmlEscape(`${step.data.records.length - 80} more records included in JSON response.`)}</p>` : ""}
+    </section>
+  `;
+}
+
+function buildAutoGenApiPrintDocument(report = {}) {
+  const overviewRows = Object.entries(report.overview || {})
+    .filter(([, value]) => value)
+    .map(([key, value]) => [key, value]);
+  return `
+    <article class="print-document autogen-print-document">
+      <header class="print-title">
+        <h1>Sri SatVam Land AutoGen Report</h1>
+        <p>${htmlEscape([report.overview?.village, report.overview?.survey, report.overview?.surnoc, report.overview?.hissa].filter(Boolean).join(" / ") || "Selected land details")}</p>
+      </header>
+      <section class="print-section">
+        <h2>Land Details</h2>
+        ${rowsHtml(overviewRows)}
+      </section>
+      ${(report.steps || []).filter((step) => step.id !== "landDetails" && step.id !== "finalReport").map(autoGenStepHtml).join("")}
+    </article>
+  `;
+}
+
+async function generateAutoGenReport(values = {}, options = {}) {
+  const overview = autoGenOverview(values);
+  const selectedStepIds = Array.isArray(options.steps) ? new Set(options.steps.map(String)) : null;
+  const serviceSteps = selectedStepIds
+    ? AUTO_GEN_SERVICE_STEPS.filter((step) => selectedStepIds.has(step.id))
+    : AUTO_GEN_SERVICE_STEPS;
+  const steps = [{
+    id: "landDetails",
+    title: "Land Details",
+    state: "completed",
+    message: "Land details accepted",
+    data: overview,
+  }];
+
+  for (const step of serviceSteps) {
+    const startedAt = new Date().toISOString();
+    try {
+      const data = await fetchAutoGenStep(step, values);
+      steps.push({
+        id: step.id,
+        title: step.title,
+        type: step.type,
+        state: "completed",
+        message: "Completed",
+        startedAt,
+        completedAt: new Date().toISOString(),
+        data,
+      });
+    } catch (error) {
+      steps.push({
+        id: step.id,
+        title: step.title,
+        type: step.type,
+        state: "failed",
+        message: error.message,
+        error: error.message,
+        startedAt,
+        completedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  const report = {
+    generatedAt: new Date().toISOString(),
+    overview,
+    ready: false,
+    steps,
+  };
+  const pdf = options.renderPdf === false
+    ? null
+    : await renderHtmlPdf(buildAutoGenApiPrintDocument(report), options.filename || autoGenFileName(values));
+  steps.push({
+    id: "finalReport",
+    title: "Final Report Ready",
+    state: pdf ? "completed" : "skipped",
+    message: pdf ? "PDF generated" : "PDF rendering skipped",
+    data: pdf || null,
+  });
+  report.ready = true;
+  report.pdf = pdf;
+  report.summary = {
+    totalSteps: steps.length,
+    completed: steps.filter((step) => step.state === "completed").length,
+    failed: steps.filter((step) => step.state === "failed").length,
+    skipped: steps.filter((step) => step.state === "skipped").length,
+  };
+  return report;
+}
+
 async function buildReport(values) {
   const sections = [];
   const disabledSections = new Set();
@@ -5482,6 +5728,19 @@ async function handleApi(req, res) {
         downloadUrl: storeDocument(Buffer.from(exportJson), "application/json; charset=utf-8", filename),
         savedAt: new Date().toISOString(),
       });
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/autogen-report") {
+      const body = await readJson(req);
+      const values = body.values || {};
+      if (!values || typeof values !== "object") throw new Error("Land details values are missing.");
+      const report = await generateAutoGenReport(values, {
+        filename: body.filename,
+        renderPdf: body.renderPdf !== false,
+        steps: body.steps,
+      });
+      json(res, 200, report);
       return;
     }
 
