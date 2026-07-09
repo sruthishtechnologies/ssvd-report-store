@@ -2081,7 +2081,7 @@ function renderVillageTable(table = {}) {
             <thead><tr>${header.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("")}</tr></thead>
             <tbody>
               ${rows.map((row) => `
-                <tr>${header.map((_, index) => `<td>${escapeHtml(row[index] || "-")}</td>`).join("")}</tr>
+                <tr>${header.map((_, index) => `<td>${renderDailyMutationCell(row[index])}</td>`).join("")}</tr>
               `).join("")}
             </tbody>
           </table>
@@ -2125,7 +2125,20 @@ function renderDailyMutationsEmpty() {
   `;
 }
 
+function tableCellValue(cell) {
+  if (cell && typeof cell === "object") return cell.text || cell.label || cell.url || "";
+  return cell || "";
+}
+
+function renderDailyMutationCell(cell) {
+  if (cell && typeof cell === "object" && cell.url) {
+    return `<a class="inline-action-link" href="${escapeAttr(cell.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cell.text || "Open")}</a>`;
+  }
+  return escapeHtml(tableCellValue(cell) || "-");
+}
+
 function renderDailyMutationRows(title, header, rows) {
+  const emptyMessage = `No Ongoing Mutations for ${title} village`;
   return `
     <section class="summary-block village-table-section">
       <div class="section-title">
@@ -2138,20 +2151,19 @@ function renderDailyMutationRows(title, header, rows) {
             <thead><tr>${header.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("")}</tr></thead>
             <tbody>
               ${rows.map((row) => `
-                <tr>${header.map((_, index) => `<td>${escapeHtml(row[index] || "-")}</td>`).join("")}</tr>
+                <tr>${header.map((_, index) => `<td>${renderDailyMutationCell(row[index])}</td>`).join("")}</tr>
               `).join("")}
             </tbody>
           </table>
         </div>
-      ` : "<p>No mutations were returned for this section.</p>"}
+      ` : `<p>${escapeHtml(emptyMessage)}</p>`}
     </section>
   `;
 }
 
 function renderDailyMutationsReport(report) {
   const overview = report.overview || {};
-  const combinedHeader = ["Village", "MR Number", "Transaction", "Survey Numbers", "Applicant", "Acquisition", "Status"];
-  const villageHeader = combinedHeader.slice(1);
+  const villageHeader = ["MR Number", "Transaction", "Survey Numbers", "Applicant", "Seller", "Buyer", "Acquisition", "Status", "Form-12", "Form-21"];
   controls.reportOutput.innerHTML = `
     ${renderServiceRefreshStatus("Daily Mutations Report", report)}
     <section class="summary-block village-overview">
@@ -2171,7 +2183,6 @@ function renderDailyMutationsReport(report) {
       </table>
       ${report.pdf?.downloadUrl ? `<p><a class="download-link" href="${escapeAttr(report.pdf.downloadUrl)}" download="${escapeAttr(report.pdf.filename || "daily-mutations-report.pdf")}">Download generated PDF</a></p>` : ""}
     </section>
-    ${renderDailyMutationRows("All Hobli Mutations", combinedHeader, report.combinedMutationRows || [])}
     ${(report.villages || []).map((item) => `
       ${item.error ? `
         <section class="summary-block village-table-section">

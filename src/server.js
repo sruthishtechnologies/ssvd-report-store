@@ -1385,8 +1385,11 @@ function wrapSvgText(value, maxChars = 42) {
 }
 
 function parseOfficialJson(text) {
-  const parsed = JSON.parse(text);
-  return typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+  const normalized = String(text || "")
+    .replace(/:\s*nodata(?=\s*[,}])/gi, ':"nodata"')
+    .replace(/:\s*undefined(?=\s*[,}])/gi, ":null");
+  const parsed = JSON.parse(normalized);
+  return typeof parsed === "string" ? parseOfficialJson(parsed) : parsed;
 }
 
 async function fetchAkarbandJson(path, payload = {}) {
@@ -1522,14 +1525,51 @@ function rowField(row = {}, keys = []) {
   return "";
 }
 
+function tableCellText(cell = "") {
+  if (cell && typeof cell === "object") return normalizeText(cell.text || cell.label || cell.url || "");
+  return normalizeText(cell);
+}
+
 function uniqueTableRows(rows = [], mapper) {
   const seen = new Set();
   return rows.map(mapper).filter((row) => {
-    const normalized = row.map((cell) => normalizeText(cell)).join("|");
+    const normalized = row.map((cell) => tableCellText(cell)).join("|");
     if (!normalized || seen.has(normalized)) return false;
     seen.add(normalized);
     return true;
   });
+}
+
+function rowFieldByPattern(row = {}, patterns = []) {
+  for (const [key, value] of Object.entries(row || {})) {
+    if (value === undefined || value === null || !String(value).trim()) continue;
+    if (patterns.some((pattern) => pattern.test(key))) return String(value).trim();
+  }
+  return "";
+}
+
+function mutationLinkCell(row = {}, label = "", patterns = []) {
+  const url = rowFieldByPattern(row, patterns.filter((pattern) => /url|link|href|path|form/i.test(pattern.source)));
+  const text = rowFieldByPattern(row, patterns) || (url ? label : "");
+  if (/^https?:\/\//i.test(url)) return { text: text || label, url };
+  if (/^\/\//.test(url)) return { text: text || label, url: `https:${url}` };
+  if (/^\//.test(url)) return { text: text || label, url: `${ECHAWADI_BASE_URL}${url}` };
+  return text || "";
+}
+
+function dailyMutationTableRow(row = {}) {
+  return [
+    rowField(row, ["MRNumber", "MR_Number", "MR No", "MRNo"]),
+    rowField(row, ["TypeofTransaction", "TransactionType", "Transaction"]),
+    rowField(row, ["SurveyNumbers", "SurveyNo", "Survey_no", "survey_no"]),
+    rowField(row, ["applicant", "ApplicantName", "Applicant"]),
+    rowField(row, ["Seller", "seller", "SellerName", "seller_name", "FromOwner", "From_Owner", "Vendor"]),
+    rowField(row, ["Buyer", "buyer", "BuyerName", "buyer_name", "ToOwner", "To_Owner", "Purchaser"]),
+    rowField(row, ["AcquisitionType", "Acquisition"]),
+    rowField(row, ["status", "Status", "MutationStatus"]),
+    mutationLinkCell(row, "Open Form-12", [/form.?12/i, /form.?xii/i, /form12/i]),
+    mutationLinkCell(row, "Open Form-21", [/form.?21/i, /form.?xxi/i, /form21/i]),
+  ];
 }
 
 function villageScanTable(id, title, rows, header, mapper) {
@@ -4096,14 +4136,7 @@ async function fetchVillageScanReport(values) {
     ...industrialProjects.map((row) => ({ ...row, scanType: row.RequestType || "Industrial Project" })),
   ];
   const tables = [
-    villageScanTable("mutations", "Mutations in the Village", mutations, ["MR Number", "Transaction", "Survey Numbers", "Applicant", "Acquisition", "Status"], (row) => [
-      rowField(row, ["MRNumber", "MR_Number", "MR No", "MRNo"]),
-      rowField(row, ["TypeofTransaction", "TransactionType", "Transaction"]),
-      rowField(row, ["SurveyNumbers", "SurveyNo", "Survey_no", "survey_no"]),
-      rowField(row, ["applicant", "ApplicantName", "Applicant"]),
-      rowField(row, ["AcquisitionType", "Acquisition"]),
-      rowField(row, ["status", "Status", "MutationStatus"]),
-    ]),
+    villageScanTable("mutations", "Mutations in the Village", mutations, ["MR Number", "Transaction", "Survey Numbers", "Applicant", "Seller", "Buyer", "Acquisition", "Status", "Form-12", "Form-21"], dailyMutationTableRow),
     villageScanTable("conversions", "Land Conversions", allConversions, ["Request", "Survey No", "Applicant", "Type", "Purpose", "Status"], (row) => [
       rowField(row, ["REQ_AID", "REQ_ID", "RequestId", "RequestNo"]),
       rowField(row, ["SurveyNo", "Survey_no", "survey_no"]),
@@ -4166,7 +4199,7 @@ function dailyMutationRowsFromVillage(report = {}, village = {}) {
 
 function dailyMutationReportHtml(report = {}) {
   const overview = report.overview || {};
-  const headers = ["Village", "MR Number", "Transaction", "Survey Numbers", "Applicant", "Acquisition", "Status"];
+  const headers = ["MR Number", "Transaction", "Survey Numbers", "Applicant", "Seller", "Buyer", "Acquisition", "Status", "Form-12", "Form-21"];
   return `
     <article class="print-document daily-mutations-print-document">
       <header class="print-title">
@@ -4184,15 +4217,11 @@ function dailyMutationReportHtml(report = {}) {
           ["Generated", report.generatedAt || "-"],
         ])}
       </section>
-      <section class="print-section">
-        <h2>Mutations in Hobli</h2>
-        ${genericTableHtml({ header: headers, rows: report.combinedMutationRows || [] }) || "<p>No mutation rows were returned for this hobli.</p>"}
-      </section>
       ${(report.villages || []).map((item) => `
         <section class="print-section">
           <h2>${htmlEscape(item.villageName || "Village")}</h2>
           ${item.error ? `<p class="error-card">${htmlEscape(item.error)}</p>` : ""}
-          ${genericTableHtml({ header: headers.slice(1), rows: item.mutations || [] }) || "<p>No mutations were returned for this village.</p>"}
+          ${genericTableHtml({ header: headers, rows: item.mutations || [] }) || `<p>No Ongoing Mutations for ${htmlEscape(item.villageName || "selected")} village.</p>`}
         </section>
       `).join("")}
     </article>
@@ -4928,7 +4957,7 @@ function rowsHtml(rows = []) {
     <table class="wide-table compact-autogen-table">
       <tbody>
         ${rows.slice(0, 60).map((row) => `
-          <tr>${(Array.isArray(row) ? row : [row]).map((cell) => `<td>${htmlEscape(cell || "-")}</td>`).join("")}</tr>
+          <tr>${(Array.isArray(row) ? row : [row]).map((cell) => `<td>${htmlEscape(tableCellText(cell) || "-")}</td>`).join("")}</tr>
         `).join("")}
       </tbody>
     </table>
@@ -4957,7 +4986,7 @@ function genericTableHtml(table = {}) {
       ${header.length ? `<thead><tr>${header.map((cell) => `<th>${htmlEscape(cell)}</th>`).join("")}</tr></thead>` : ""}
       <tbody>
         ${table.rows.slice(0, 120).map((row) => `
-          <tr>${(Array.isArray(row) ? row : [row]).map((cell) => `<td>${htmlEscape(cell || "-")}</td>`).join("")}</tr>
+          <tr>${(Array.isArray(row) ? row : [row]).map((cell) => `<td>${htmlEscape(tableCellText(cell) || "-")}</td>`).join("")}</tr>
         `).join("")}
       </tbody>
     </table>
