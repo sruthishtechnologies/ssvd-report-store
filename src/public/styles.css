@@ -432,6 +432,10 @@ body.village-workspace #go {
   display: none;
 }
 
+body.hobli-workspace label[for="village"] {
+  display: none;
+}
+
 .section-title span,
 .record-card header span {
   display: block;

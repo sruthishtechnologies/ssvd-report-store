@@ -71,9 +71,12 @@ const AWS_DYNAMODB_TABLE = process.env.AWS_DYNAMODB_TABLE || "";
 const AWS_S3_BUCKET = process.env.AWS_S3_BUCKET || "";
 const AWS_S3_PREFIX = (process.env.AWS_S3_PREFIX || "ssvd-report-store").replace(/^\/+|\/+$/g, "");
 const AWS_SECRETS_ID = process.env.AWS_SECRETS_ID || "";
+const AWS_SES_FROM_EMAIL = process.env.AWS_SES_FROM_EMAIL || "";
+const APP_PUBLIC_URL = (process.env.APP_PUBLIC_URL || process.env.PUBLIC_APP_URL || "").replace(/\/+$/g, "");
 const REPORT_WORKSPACES = [
   { id: "fullLegalReport", name: "Full Legal Report" },
   { id: "landAutoGenReport", name: "Land AutoGen Report" },
+  { id: "dailyMutationsReport", name: "Daily Mutations Report" },
   { id: "landScoreCard", name: "Land Score Card" },
   { id: "dueDiligenceDashboard", name: "Evidence & Gaps Dashboard" },
   { id: "documentGapFinder", name: "Document Gap Finder" },
@@ -4140,6 +4143,120 @@ async function fetchVillageScanReport(values) {
   };
 }
 
+async function echawadiVillagesForHobli(values = {}) {
+  const dist = numberString(values.district);
+  const taluk = numberString(values.taluk);
+  const hobli = numberString(values.hobli);
+  if (!dist || !taluk || !hobli) throw new Error("District, taluk and hobli are required for Daily Mutations Report.");
+  const villages = await fetchEchawadiJson("LoadVillage", {
+    pDistCode: dist,
+    pTalukCode: taluk,
+    pHobliCode: hobli,
+  });
+  return echawadiOptions(villages?.data, "village_code", "village_name_kn");
+}
+
+function dailyMutationRowsFromVillage(report = {}, village = {}) {
+  const mutationTable = (report.tables || []).find((table) => table.id === "mutations" || /mutation/i.test(table.title || ""));
+  return (mutationTable?.rows || []).map((row) => [
+    village.label || report.overview?.village || "-",
+    ...row,
+  ]);
+}
+
+function dailyMutationReportHtml(report = {}) {
+  const overview = report.overview || {};
+  const headers = ["Village", "MR Number", "Transaction", "Survey Numbers", "Applicant", "Acquisition", "Status"];
+  return `
+    <article class="print-document daily-mutations-print-document">
+      <header class="print-title">
+        <h1>Daily Mutations Report</h1>
+        <p>${htmlEscape([overview.hobli, overview.taluk, overview.district].filter(Boolean).join(", ") || "Selected Hobli")}</p>
+      </header>
+      <section class="print-section">
+        <h2>Hobli Summary</h2>
+        ${rowsHtml([
+          ["District", overview.district || "-"],
+          ["Taluk", overview.taluk || "-"],
+          ["Hobli", overview.hobli || "-"],
+          ["Villages Scanned", overview.villagesScanned || 0],
+          ["Mutations Found", overview.totalMutations || 0],
+          ["Generated", report.generatedAt || "-"],
+        ])}
+      </section>
+      <section class="print-section">
+        <h2>Mutations in Hobli</h2>
+        ${genericTableHtml({ header: headers, rows: report.combinedMutationRows || [] }) || "<p>No mutation rows were returned for this hobli.</p>"}
+      </section>
+      ${(report.villages || []).map((item) => `
+        <section class="print-section">
+          <h2>${htmlEscape(item.villageName || "Village")}</h2>
+          ${item.error ? `<p class="error-card">${htmlEscape(item.error)}</p>` : ""}
+          ${genericTableHtml({ header: headers.slice(1), rows: item.mutations || [] }) || "<p>No mutations were returned for this village.</p>"}
+        </section>
+      `).join("")}
+    </article>
+  `;
+}
+
+async function fetchDailyMutationsReport(values = {}, options = {}) {
+  const villages = Array.isArray(options.villages) && options.villages.length
+    ? options.villages
+    : await echawadiVillagesForHobli(values);
+  const report = {
+    generatedAt: new Date().toISOString(),
+    overview: {
+      district: values.districtLabel || values.district || "",
+      taluk: values.talukLabel || values.taluk || "",
+      hobli: values.hobliLabel || values.hobli || "",
+      source: "eChawadi",
+      villagesScanned: 0,
+      totalMutations: 0,
+    },
+    villages: [],
+    combinedMutationRows: [],
+  };
+
+  for (const village of villages) {
+    const villageValues = {
+      ...values,
+      village: village.value,
+      villageLabel: village.label,
+    };
+    try {
+      const villageReport = await fetchVillageScanReport(villageValues);
+      const mutationTable = (villageReport.tables || []).find((table) => table.id === "mutations" || /mutation/i.test(table.title || ""));
+      const mutations = mutationTable?.rows || [];
+      report.villages.push({
+        village: village.value,
+        villageName: village.label,
+        mutationCount: mutations.length,
+        mutations,
+        generatedAt: villageReport.generatedAt,
+      });
+      report.combinedMutationRows.push(...dailyMutationRowsFromVillage(villageReport, village));
+    } catch (error) {
+      report.villages.push({
+        village: village.value,
+        villageName: village.label,
+        mutationCount: 0,
+        mutations: [],
+        error: error.message,
+      });
+    }
+  }
+
+  report.overview.villagesScanned = report.villages.length;
+  report.overview.totalMutations = report.combinedMutationRows.length;
+  if (options.renderPdf !== false) {
+    report.pdf = await renderHtmlPdf(
+      dailyMutationReportHtml(report),
+      options.filename || `Daily_Mutations_${safeName(report.overview.hobli || values.hobli, "Hobli")}_${new Date().toISOString().slice(0, 10)}.pdf`,
+    );
+  }
+  return report;
+}
+
 async function fetchKathaValidationReport(values) {
   const [currentRtcSection, khathaSection, advancedResult] = await Promise.allSettled([
     fetchRtcSection("current", values),
@@ -5196,6 +5313,7 @@ function collectDocumentFiles(state = {}) {
     for (const record of section.records || []) addRecord(`Full_Legal_Documents/${safeName(section.title, "section")}`, record, "record");
   }
   for (const record of reports.villageScan?.records || []) addRecord("Village_Scan", record, "village-record");
+  if (reports.dailyMutations?.pdf?.downloadUrl) addRecord("Daily_Mutations", reports.dailyMutations.pdf, "daily-mutations-report");
   for (const record of reports.kathaValidation?.records || []) addRecord("Katha_Validation", record, "katha-record");
 
   const seen = new Set();
@@ -5296,6 +5414,7 @@ function reportArchiveFiles(name = "", state = {}) {
     ["download_rtcs_report.json", reports.downloadRtcs],
     ["scan_rtcs_report.json", reports.scanRtcs],
     ["village_scan_report.json", reports.villageScan],
+    ["daily_mutations_report.json", reports.dailyMutations],
     ["katha_validation_report.json", reports.kathaValidation],
     ["score_card.json", reports.scoreCard],
     ["feature_notes_status.json", reports.featureReports],
@@ -5367,6 +5486,7 @@ function defaultAdminStore() {
       },
     ],
     notice: { enabled: false, message: "" },
+    dailyMutationSchedules: [],
   };
 }
 
@@ -5384,6 +5504,7 @@ async function readAdminStore() {
       registrations: Array.isArray(parsed.registrations) ? parsed.registrations : [],
       roles,
       notice: parsed.notice || { enabled: false, message: "" },
+      dailyMutationSchedules: Array.isArray(parsed.dailyMutationSchedules) ? parsed.dailyMutationSchedules : [],
     };
   }
   try {
@@ -5398,6 +5519,7 @@ async function readAdminStore() {
       registrations: Array.isArray(parsed.registrations) ? parsed.registrations : [],
       roles,
       notice: parsed.notice || { enabled: false, message: "" },
+      dailyMutationSchedules: Array.isArray(parsed.dailyMutationSchedules) ? parsed.dailyMutationSchedules : [],
     };
   } catch {
     return defaultAdminStore();
@@ -5468,6 +5590,125 @@ function registrationUsername(email = "") {
   return String(email || "").trim().toLowerCase();
 }
 
+function splitEmails(value = "") {
+  return String(value || "")
+    .split(/[,\n;]/)
+    .map((email) => email.trim())
+    .filter(Boolean);
+}
+
+function absoluteAppUrl(path = "") {
+  const prefix = APP_PUBLIC_URL || `http://${HOST === "0.0.0.0" ? "127.0.0.1" : HOST}:${PORT}`;
+  return `${prefix}${String(path || "").startsWith("/") ? path : `/${path}`}`;
+}
+
+async function sendDailyMutationEmail(schedule = {}, report = {}) {
+  const emails = splitEmails(schedule.emails);
+  if (!emails.length) return { sent: false, reason: "No email recipients configured." };
+  if (!AWS_SES_FROM_EMAIL) return { sent: false, reason: "AWS_SES_FROM_EMAIL is not configured." };
+  try {
+    const [{ SESClient, SendEmailCommand }] = await Promise.all([
+      import("@aws-sdk/client-ses"),
+    ]);
+    const client = new SESClient({ region: AWS_REGION });
+    const pdfUrl = report.pdf?.downloadUrl ? absoluteAppUrl(report.pdf.downloadUrl) : "";
+    await client.send(new SendEmailCommand({
+      Source: AWS_SES_FROM_EMAIL,
+      Destination: { ToAddresses: emails },
+      Message: {
+        Subject: { Charset: "UTF-8", Data: `Daily Mutations Report - ${schedule.hobliLabel || schedule.hobli || "Hobli"}` },
+        Body: {
+          Text: {
+            Charset: "UTF-8",
+            Data: [
+              `Daily Mutations Report is ready.`,
+              `District: ${schedule.districtLabel || schedule.district || "-"}`,
+              `Taluk: ${schedule.talukLabel || schedule.taluk || "-"}`,
+              `Hobli: ${schedule.hobliLabel || schedule.hobli || "-"}`,
+              `Villages scanned: ${report.overview?.villagesScanned || 0}`,
+              `Mutations found: ${report.overview?.totalMutations || 0}`,
+              pdfUrl ? `PDF: ${pdfUrl}` : "PDF link was not generated.",
+            ].join("\n"),
+          },
+        },
+      },
+    }));
+    return { sent: true, recipients: emails };
+  } catch (error) {
+    return { sent: false, reason: error.message };
+  }
+}
+
+async function runDailyMutationSchedule(schedule = {}) {
+  const report = await fetchDailyMutationsReport(schedule, { renderPdf: true });
+  const email = await sendDailyMutationEmail(schedule, report);
+  return {
+    ok: true,
+    ranAt: new Date().toISOString(),
+    report,
+    email,
+  };
+}
+
+function todayInIst() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function currentIstHourMinute() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date()).map((part) => [part.type, part.value]));
+  return { hour: Number(parts.hour), minute: Number(parts.minute) };
+}
+
+let dailyMutationSchedulerRunning = false;
+
+async function runDueDailyMutationSchedules() {
+  if (dailyMutationSchedulerRunning) return;
+  const { hour, minute } = currentIstHourMinute();
+  if (hour !== 6 || minute > 10) return;
+  dailyMutationSchedulerRunning = true;
+  try {
+    const today = todayInIst();
+    const store = await readAdminStore();
+    let changed = false;
+    for (const schedule of store.dailyMutationSchedules || []) {
+      if (!schedule.enabled || schedule.lastRunDate === today) continue;
+      try {
+        const result = await runDailyMutationSchedule(schedule);
+        schedule.lastRunDate = today;
+        schedule.lastRunAt = result.ranAt;
+        schedule.lastStatus = "Completed";
+        schedule.lastReport = {
+          generatedAt: result.report.generatedAt,
+          totalMutations: result.report.overview?.totalMutations || 0,
+          villagesScanned: result.report.overview?.villagesScanned || 0,
+          pdf: result.report.pdf || null,
+          email: result.email,
+        };
+      } catch (error) {
+        schedule.lastRunDate = today;
+        schedule.lastRunAt = new Date().toISOString();
+        schedule.lastStatus = error.message;
+      }
+      changed = true;
+    }
+    if (changed) await writeAdminStore(store);
+  } catch (error) {
+    console.warn(`Daily mutations scheduler failed: ${error.message}`);
+  } finally {
+    dailyMutationSchedulerRunning = false;
+  }
+}
+
 async function handleApi(req, res) {
   try {
     if (req.method === "GET" && req.url === "/api/public-state") {
@@ -5525,6 +5766,7 @@ async function handleApi(req, res) {
         registrations: store.registrations,
         roles: store.roles,
         notice: store.notice,
+        dailyMutationSchedules: store.dailyMutationSchedules || [],
       });
       return;
     }
@@ -5620,6 +5862,71 @@ async function handleApi(req, res) {
       user.passwordResetAt = new Date().toISOString();
       await writeAdminStore(store);
       json(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/admin/daily-mutations-schedule") {
+      const body = await readJson(req);
+      requireAdmin(body);
+      const store = await readAdminStore();
+      const schedule = body.schedule || {};
+      const district = numberString(schedule.district);
+      const taluk = numberString(schedule.taluk);
+      const hobli = numberString(schedule.hobli);
+      if (!district || !taluk || !hobli) throw new Error("District, taluk and hobli are required.");
+      const payload = {
+        id: schedule.id || randomUUID(),
+        name: String(schedule.name || schedule.hobliLabel || "Daily Mutations Report").trim(),
+        enabled: schedule.enabled !== false,
+        district,
+        districtLabel: String(schedule.districtLabel || schedule.district || "").trim(),
+        taluk,
+        talukLabel: String(schedule.talukLabel || schedule.taluk || "").trim(),
+        hobli,
+        hobliLabel: String(schedule.hobliLabel || schedule.hobli || "").trim(),
+        emails: splitEmails(schedule.emails).join(", "),
+        updatedAt: new Date().toISOString(),
+      };
+      const existing = (store.dailyMutationSchedules || []).find((item) => item.id === payload.id);
+      if (existing) Object.assign(existing, payload);
+      else {
+        store.dailyMutationSchedules ||= [];
+        store.dailyMutationSchedules.push({ ...payload, createdAt: payload.updatedAt });
+      }
+      await writeAdminStore(store);
+      json(res, 200, { schedules: store.dailyMutationSchedules });
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/admin/delete-daily-mutations-schedule") {
+      const body = await readJson(req);
+      requireAdmin(body);
+      const store = await readAdminStore();
+      store.dailyMutationSchedules = (store.dailyMutationSchedules || []).filter((item) => item.id !== body.scheduleId);
+      await writeAdminStore(store);
+      json(res, 200, { schedules: store.dailyMutationSchedules });
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/admin/run-daily-mutations-schedule") {
+      const body = await readJson(req);
+      requireAdmin(body);
+      const store = await readAdminStore();
+      const schedule = (store.dailyMutationSchedules || []).find((item) => item.id === body.scheduleId);
+      if (!schedule) throw new Error("Daily mutations schedule not found.");
+      const result = await runDailyMutationSchedule(schedule);
+      schedule.lastRunDate = todayInIst();
+      schedule.lastRunAt = result.ranAt;
+      schedule.lastStatus = "Completed";
+      schedule.lastReport = {
+        generatedAt: result.report.generatedAt,
+        totalMutations: result.report.overview?.totalMutations || 0,
+        villagesScanned: result.report.overview?.villagesScanned || 0,
+        pdf: result.report.pdf || null,
+        email: result.email,
+      };
+      await writeAdminStore(store);
+      json(res, 200, { result, schedules: store.dailyMutationSchedules });
       return;
     }
 
@@ -5790,6 +6097,20 @@ async function handleApi(req, res) {
       return;
     }
 
+    if (req.method === "POST" && req.url === "/api/daily-mutations-report") {
+      const body = await readJson(req);
+      const report = await withReportTimeout(
+        fetchDailyMutationsReport(body.values || {}, {
+          renderPdf: body.renderPdf !== false,
+          filename: body.filename,
+        }),
+        OLD_RTC_TASK_TIMEOUT_MS,
+        "Daily Mutations Report took too long. Please try again.",
+      );
+      json(res, 200, report);
+      return;
+    }
+
     if (req.method === "POST" && req.url === "/api/katha-validation") {
       const body = await readJson(req);
       const report = await withReportTimeout(
@@ -5935,6 +6256,10 @@ try {
     console.log(`SSVD Report Store running at http://${HOST}:${PORT}`);
     console.log(`Storage mode: ${awsStorageEnabled() ? "aws-s3-dynamodb" : "local-files"}`);
   });
+  setInterval(() => {
+    runDueDailyMutationSchedules().catch((error) => console.warn(`Daily mutations scheduler tick failed: ${error.message}`));
+  }, 60 * 1000);
+  runDueDailyMutationSchedules().catch((error) => console.warn(`Daily mutations scheduler startup check failed: ${error.message}`));
 } catch (error) {
   console.error(`Startup failed: ${error.message}`);
   process.exitCode = 1;

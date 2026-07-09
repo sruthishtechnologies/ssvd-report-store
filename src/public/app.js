@@ -25,6 +25,12 @@ const workspaces = [
     status: "Land AutoGen Report selected",
   },
   {
+    id: "dailyMutationsReport",
+    name: "Daily Mutations Report",
+    hint: "Manual and scheduled hobli-level eChawadi mutation report across all villages.",
+    status: "Daily Mutations Report selected",
+  },
+  {
     id: "landScoreCard",
     name: "Land Score Card",
     hint: "Manual land due-diligence scorecard for documents, risks and purchase decision readiness.",
@@ -205,6 +211,7 @@ let activeReport = reports[0];
 let cachedReport = null;
 let cachedMrDownloader = null;
 let cachedVillageScan = null;
+let cachedDailyMutations = null;
 let cachedKathaValidation = null;
 let cachedDownloadRtcs = null;
 let cachedScanRtcs = null;
@@ -247,7 +254,7 @@ function hasWorkspaceAccess(workspaceId) {
 }
 
 function usesLandDetails() {
-  return !isAdminWorkspace() && (isFullLegalWorkspace() || isAutoGenWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace());
+  return !isAdminWorkspace() && (isFullLegalWorkspace() || isAutoGenWorkspace() || isDailyMutationsWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace());
 }
 
 function isFeatureWorkspace() {
@@ -255,7 +262,7 @@ function isFeatureWorkspace() {
 }
 
 function activeLocationSource() {
-  return isVillageScanWorkspace() ? "echawadi" : "bhoomi";
+  return (isVillageScanWorkspace() || isDailyMutationsWorkspace()) ? "echawadi" : "bhoomi";
 }
 
 function selectedText(control) {
@@ -311,6 +318,14 @@ function isPlaceholder(value = "") {
 }
 
 function hasRequiredInputs() {
+  if (isDailyMutationsWorkspace()) {
+    return Boolean(
+      sessionId
+      && !isPlaceholder(controls.district.value)
+      && !isPlaceholder(controls.taluk.value)
+      && !isPlaceholder(controls.hobli.value),
+    );
+  }
   if (isVillageScanWorkspace()) {
     return Boolean(
       sessionId
@@ -392,6 +407,16 @@ function restoreDisabled(state) {
     controls.fetchReport.disabled = loading || !hasRequiredInputs();
     return;
   }
+  if (isDailyMutationsWorkspace()) {
+    controls.village.disabled = true;
+    controls.survey.disabled = true;
+    controls.go.disabled = true;
+    controls.surnoc.disabled = true;
+    controls.hissa.disabled = true;
+    controls.period.disabled = true;
+    controls.fetchReport.disabled = loading || !hasRequiredInputs();
+    return;
+  }
   controls.survey.disabled = state.survey.disabled;
   controls.go.disabled = state.survey.disabled || !controls.survey.value.trim();
   controls.fetchReport.disabled = loading || !hasRequiredInputs();
@@ -446,7 +471,7 @@ async function getJson(path) {
 
 function setExportAvailability() {
   controls.exportData.disabled = !cachedReport || activeWorkspace.id !== "fullLegalReport";
-  const hasAnySavedData = Boolean(cachedReport || cachedAutoGenReport || cachedMrDownloader || cachedDownloadRtcs || cachedScanRtcs || cachedVillageScan || cachedKathaValidation || cachedScoreCard || Object.keys(cachedFeatureReports || {}).length);
+  const hasAnySavedData = Boolean(cachedReport || cachedAutoGenReport || cachedDailyMutations || cachedMrDownloader || cachedDownloadRtcs || cachedScanRtcs || cachedVillageScan || cachedKathaValidation || cachedScoreCard || Object.keys(cachedFeatureReports || {}).length);
   controls.saveReport.disabled = !hasAnySavedData;
   controls.downloadFolder.disabled = !hasAnySavedData;
 }
@@ -526,6 +551,10 @@ function isFullLegalWorkspace() {
 
 function isAutoGenWorkspace() {
   return activeWorkspace.id === "landAutoGenReport";
+}
+
+function isDailyMutationsWorkspace() {
+  return activeWorkspace.id === "dailyMutationsReport";
 }
 
 function isScoreCardWorkspace() {
@@ -623,6 +652,7 @@ function currentReportDataStore() {
     downloadRtcs: cachedDownloadRtcs,
     scanRtcs: cachedScanRtcs,
     villageScan: cachedVillageScan,
+    dailyMutations: cachedDailyMutations,
     kathaValidation: cachedKathaValidation,
     scoreCard: cachedScoreCard,
     featureReports: cachedFeatureReports,
@@ -1025,18 +1055,19 @@ function renderWorkspace() {
   controls.activeWorkspaceHint.textContent = activeWorkspace.hint;
   renderWorkspaceMenu();
   document.body.classList.toggle("secondary-workspace", !isFullLegalWorkspace());
-  document.body.classList.toggle("village-workspace", isVillageScanWorkspace());
+  document.body.classList.toggle("village-workspace", isVillageScanWorkspace() || isDailyMutationsWorkspace());
+  document.body.classList.toggle("hobli-workspace", isDailyMutationsWorkspace());
   const landDetailsVisible = usesLandDetails();
   controls.landPanel.hidden = !landDetailsVisible;
   controls.menu.hidden = !isFullLegalWorkspace();
-  controls.reportActions.hidden = !(isFullLegalWorkspace() || isAutoGenWorkspace() || isScoreCardWorkspace() || isFeatureWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace());
+  controls.reportActions.hidden = !(isFullLegalWorkspace() || isAutoGenWorkspace() || isDailyMutationsWorkspace() || isScoreCardWorkspace() || isFeatureWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace());
   controls.exportData.hidden = !isFullLegalWorkspace();
-  controls.print.hidden = !(isFullLegalWorkspace() || isAutoGenWorkspace() || isScoreCardWorkspace() || isFeatureWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace());
+  controls.print.hidden = !(isFullLegalWorkspace() || isAutoGenWorkspace() || isDailyMutationsWorkspace() || isScoreCardWorkspace() || isFeatureWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace());
   controls.print.textContent = isAutoGenWorkspace() ? "Download Report" : "Print Report";
-  controls.fetchReport.textContent = isAutoGenWorkspace() ? "Generate Automated Report" : (isVillageScanWorkspace() ? "Fetch Village Data" : (isKathaValidationWorkspace() ? "Validate Katha" : (isDownloadRtcsWorkspace() ? "Download RTCs" : (isScanRtcsWorkspace() ? "Scan RTCs" : "Fetch Data"))));
-  controls.survey.required = !isVillageScanWorkspace();
-  controls.surnoc.required = !isVillageScanWorkspace();
-  controls.hissa.required = !isVillageScanWorkspace();
+  controls.fetchReport.textContent = isAutoGenWorkspace() ? "Generate Automated Report" : (isDailyMutationsWorkspace() ? "Generate Daily Report" : (isVillageScanWorkspace() ? "Fetch Village Data" : (isKathaValidationWorkspace() ? "Validate Katha" : (isDownloadRtcsWorkspace() ? "Download RTCs" : (isScanRtcsWorkspace() ? "Scan RTCs" : "Fetch Data")))));
+  controls.survey.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace());
+  controls.surnoc.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace());
+  controls.hissa.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace());
   if (currentState) restoreDisabled(currentState);
   setExportAvailability();
 
@@ -1067,6 +1098,13 @@ function renderWorkspace() {
     controls.activeReportName.textContent = activeWorkspace.name;
     if (cachedAutoGenReport) renderAutoGenReport(cachedAutoGenReport);
     else renderAutoGenEmpty();
+    return;
+  }
+
+  if (isDailyMutationsWorkspace()) {
+    controls.activeReportName.textContent = activeWorkspace.name;
+    if (cachedDailyMutations) renderDailyMutationsReport(cachedDailyMutations);
+    else renderDailyMutationsEmpty();
     return;
   }
 
@@ -1124,6 +1162,7 @@ function clearCachedReport() {
   cachedReport = null;
   cachedMrDownloader = null;
   cachedVillageScan = null;
+  cachedDailyMutations = null;
   cachedKathaValidation = null;
   cachedDownloadRtcs = null;
   cachedScanRtcs = null;
@@ -1756,6 +1795,47 @@ function renderAdminPanel() {
       </section>
 
       <section class="summary-block">
+        <div class="section-title"><h3>Daily Mutations Schedules</h3><span>Runs around 6:00 AM IST every day</span></div>
+        <div class="admin-card" data-daily-schedule-editor>
+          <div class="admin-grid">
+            <label><span>Schedule name</span><input data-daily-name placeholder="Example: Malur Lakkuru Hobli"></label>
+            <label><span>District code</span><input data-daily-district placeholder="Example: 19"></label>
+            <label><span>District label</span><input data-daily-district-label placeholder="Example: Kolar"></label>
+            <label><span>Taluk code</span><input data-daily-taluk placeholder="Example: 9"></label>
+            <label><span>Taluk label</span><input data-daily-taluk-label placeholder="Example: Malur"></label>
+            <label><span>Hobli code</span><input data-daily-hobli placeholder="Example: 3"></label>
+            <label><span>Hobli label</span><input data-daily-hobli-label placeholder="Example: Lakkuru"></label>
+            <label><span>Email recipients</span><textarea data-daily-emails rows="3" placeholder="one@example.com, two@example.com"></textarea></label>
+          </div>
+          <label class="checkbox-line"><input data-daily-enabled type="checkbox" checked><span>Enabled</span></label>
+          <button type="button" data-admin-action="save-daily-schedule">Create Schedule</button>
+        </div>
+        ${(adminState?.dailyMutationSchedules || []).map((schedule) => `
+          <div class="admin-card" data-daily-schedule-id="${escapeAttr(schedule.id)}">
+            <div class="section-title"><h4>${escapeHtml(schedule.name || schedule.hobliLabel || "Daily Mutations Report")}</h4><span>${schedule.enabled ? "Enabled" : "Disabled"}</span></div>
+            <div class="admin-grid">
+              <label><span>Schedule name</span><input data-daily-name value="${escapeAttr(schedule.name || "")}"></label>
+              <label><span>District code</span><input data-daily-district value="${escapeAttr(schedule.district || "")}"></label>
+              <label><span>District label</span><input data-daily-district-label value="${escapeAttr(schedule.districtLabel || "")}"></label>
+              <label><span>Taluk code</span><input data-daily-taluk value="${escapeAttr(schedule.taluk || "")}"></label>
+              <label><span>Taluk label</span><input data-daily-taluk-label value="${escapeAttr(schedule.talukLabel || "")}"></label>
+              <label><span>Hobli code</span><input data-daily-hobli value="${escapeAttr(schedule.hobli || "")}"></label>
+              <label><span>Hobli label</span><input data-daily-hobli-label value="${escapeAttr(schedule.hobliLabel || "")}"></label>
+              <label><span>Email recipients</span><textarea data-daily-emails rows="3">${escapeHtml(schedule.emails || "")}</textarea></label>
+            </div>
+            <label class="checkbox-line"><input data-daily-enabled type="checkbox" ${schedule.enabled ? "checked" : ""}><span>Enabled</span></label>
+            <p>${escapeHtml(schedule.lastRunAt ? `Last run: ${new Date(schedule.lastRunAt).toLocaleString()} | ${schedule.lastStatus || "-"}` : "Not run yet")}</p>
+            ${schedule.lastReport?.pdf?.downloadUrl ? `<p><a class="download-link" href="${escapeAttr(schedule.lastReport.pdf.downloadUrl)}" download="${escapeAttr(schedule.lastReport.pdf.filename || "daily-mutations-report.pdf")}">Download latest report</a></p>` : ""}
+            <div class="admin-actions-row">
+              <button type="button" data-admin-action="save-daily-schedule">Update Schedule</button>
+              <button type="button" data-admin-action="run-daily-schedule">Run Now</button>
+              <button type="button" data-admin-action="delete-daily-schedule">Delete</button>
+            </div>
+          </div>
+        `).join("") || "<p>No daily mutation schedules configured.</p>"}
+      </section>
+
+      <section class="summary-block">
         <div class="section-title"><h3>New Registration Requests</h3><span>${pending.length} pending</span></div>
         ${pending.length ? pending.map((request) => `
           <div class="admin-card" data-request-id="${escapeAttr(request.id)}">
@@ -1814,6 +1894,21 @@ async function refreshAdminPanel(message = "Admin updated") {
   await loadAdminState();
   renderAdminPanel();
   setStatus(message);
+}
+
+function dailySchedulePayload(card) {
+  return {
+    id: card.dataset.dailyScheduleId || "",
+    name: card.querySelector("[data-daily-name]")?.value || "",
+    enabled: Boolean(card.querySelector("[data-daily-enabled]")?.checked),
+    district: card.querySelector("[data-daily-district]")?.value || "",
+    districtLabel: card.querySelector("[data-daily-district-label]")?.value || "",
+    taluk: card.querySelector("[data-daily-taluk]")?.value || "",
+    talukLabel: card.querySelector("[data-daily-taluk-label]")?.value || "",
+    hobli: card.querySelector("[data-daily-hobli]")?.value || "",
+    hobliLabel: card.querySelector("[data-daily-hobli-label]")?.value || "",
+    emails: card.querySelector("[data-daily-emails]")?.value || "",
+  };
 }
 
 async function handleAdminAction(event) {
@@ -1878,6 +1973,26 @@ async function handleAdminAction(event) {
         password: card.querySelector("[data-reset-password]").value,
       });
       await refreshAdminPanel("Password reset");
+    } else if (action === "save-daily-schedule") {
+      await api("/api/admin/daily-mutations-schedule", {
+        adminUsername: currentUser.username,
+        schedule: dailySchedulePayload(card),
+      });
+      await refreshAdminPanel("Daily mutations schedule saved");
+    } else if (action === "run-daily-schedule") {
+      button.disabled = true;
+      button.textContent = "Running...";
+      await api("/api/admin/run-daily-mutations-schedule", {
+        adminUsername: currentUser.username,
+        scheduleId: card.dataset.dailyScheduleId,
+      });
+      await refreshAdminPanel("Daily mutations schedule completed");
+    } else if (action === "delete-daily-schedule") {
+      await api("/api/admin/delete-daily-mutations-schedule", {
+        adminUsername: currentUser.username,
+        scheduleId: card.dataset.dailyScheduleId,
+      });
+      await refreshAdminPanel("Daily mutations schedule deleted");
     }
   } catch (error) {
     setStatus(error.message);
@@ -1998,6 +2113,73 @@ function renderVillageScanReport(report) {
       </table>
     </section>
     ${tables.map(renderVillageTable).join("") || "<p>No village scan tables were returned.</p>"}
+  `;
+}
+
+function renderDailyMutationsEmpty() {
+  controls.reportOutput.innerHTML = `
+    <div class="empty-state">
+      <strong>Daily Mutations Report</strong>
+      <span>Select district, taluk and hobli above, then click Generate Daily Report. The app will scan all villages in the hobli and list eChawadi mutations village-wise.</span>
+    </div>
+  `;
+}
+
+function renderDailyMutationRows(title, header, rows) {
+  return `
+    <section class="summary-block village-table-section">
+      <div class="section-title">
+        <h3>${escapeHtml(title)}</h3>
+        <span>${rows.length ? `${rows.length} mutation(s)` : "No mutations returned"}</span>
+      </div>
+      ${rows.length ? `
+        <div class="table-scroll">
+          <table class="wide-table village-scan-table">
+            <thead><tr>${header.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("")}</tr></thead>
+            <tbody>
+              ${rows.map((row) => `
+                <tr>${header.map((_, index) => `<td>${escapeHtml(row[index] || "-")}</td>`).join("")}</tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : "<p>No mutations were returned for this section.</p>"}
+    </section>
+  `;
+}
+
+function renderDailyMutationsReport(report) {
+  const overview = report.overview || {};
+  const combinedHeader = ["Village", "MR Number", "Transaction", "Survey Numbers", "Applicant", "Acquisition", "Status"];
+  const villageHeader = combinedHeader.slice(1);
+  controls.reportOutput.innerHTML = `
+    ${renderServiceRefreshStatus("Daily Mutations Report", report)}
+    <section class="summary-block village-overview">
+      <div class="section-title">
+        <h3>Daily Mutations Summary</h3>
+        <span>${escapeHtml(overview.source || "eChawadi")}</span>
+      </div>
+      <table>
+        ${rowsPreview([
+          ["District", overview.district || "-"],
+          ["Taluk", overview.taluk || "-"],
+          ["Hobli", overview.hobli || "-"],
+          ["Villages Scanned", overview.villagesScanned || 0],
+          ["Mutations Found", overview.totalMutations || 0],
+          ["Generated", report.generatedAt ? new Date(report.generatedAt).toLocaleString() : "-"],
+        ], 10)}
+      </table>
+      ${report.pdf?.downloadUrl ? `<p><a class="download-link" href="${escapeAttr(report.pdf.downloadUrl)}" download="${escapeAttr(report.pdf.filename || "daily-mutations-report.pdf")}">Download generated PDF</a></p>` : ""}
+    </section>
+    ${renderDailyMutationRows("All Hobli Mutations", combinedHeader, report.combinedMutationRows || [])}
+    ${(report.villages || []).map((item) => `
+      ${item.error ? `
+        <section class="summary-block village-table-section">
+          <div class="section-title"><h3>${escapeHtml(item.villageName || "Village")}</h3><span>Fetch failed</span></div>
+          <div class="error-card">${escapeHtml(item.error)}</div>
+        </section>
+      ` : renderDailyMutationRows(item.villageName || "Village", villageHeader, item.mutations || [])}
+    `).join("")}
   `;
 }
 
@@ -3245,6 +3427,32 @@ function printVillageScanReport() {
   requestAnimationFrame(() => window.print());
 }
 
+function printDailyMutationsReport() {
+  if (!cachedDailyMutations) {
+    setStatus("Generate Daily Mutations Report before printing");
+    return;
+  }
+  const overview = cachedDailyMutations.overview || {};
+  const originalOutput = controls.reportOutput.innerHTML;
+  renderDailyMutationsReport(cachedDailyMutations);
+  const reportHtml = controls.reportOutput.innerHTML;
+  controls.reportOutput.innerHTML = originalOutput;
+  controls.printOutput.innerHTML = `
+    <article class="print-document village-print-document">
+      <header class="print-title">
+        <h1>Daily Mutations Report</h1>
+        <p>${escapeHtml([overview.hobli, overview.taluk, overview.district].filter(Boolean).join(", ") || "Selected hobli")}</p>
+      </header>
+      <section class="print-section">
+        ${reportHtml}
+      </section>
+    </article>
+  `;
+  document.body.classList.add("print-mode");
+  setStatus("Preparing Daily Mutations printable report...");
+  requestAnimationFrame(() => window.print());
+}
+
 function printKathaValidationReport() {
   if (!cachedKathaValidation) {
     setStatus("Validate Katha before printing");
@@ -3318,6 +3526,10 @@ function printFeatureWorkspaceReport() {
 function printCombinedReport() {
   if (isAutoGenWorkspace()) {
     downloadAutoGenPdf().catch((error) => setStatus(error.message));
+    return;
+  }
+  if (isDailyMutationsWorkspace()) {
+    printDailyMutationsReport();
     return;
   }
   if (isScoreCardWorkspace()) {
@@ -3449,6 +3661,29 @@ async function fetchVillageScanData() {
   }
 }
 
+async function fetchDailyMutationsData() {
+  if (!hasRequiredInputs()) {
+    setStatus("Select district, taluk and hobli first");
+    return;
+  }
+  setBusy(true);
+  setStatus("Generating hobli-level daily mutations report...");
+  controls.reportOutput.innerHTML = `<div class="loading-card">Scanning all villages in the selected hobli and fetching eChawadi mutation rows. This can take time for large hoblis.</div>`;
+  try {
+    cachedDailyMutations = await api("/api/daily-mutations-report", { sessionId, values: values() });
+    cachedDailyMutations.fetchedAt = new Date().toISOString();
+    setExportAvailability();
+    renderDailyMutationsReport(cachedDailyMutations);
+    setStatus(`Daily Mutations Report ready: ${cachedDailyMutations.overview?.totalMutations || 0} mutation(s) found`);
+  } catch (error) {
+    cachedDailyMutations = null;
+    controls.reportOutput.innerHTML = `<div class="error-card">${escapeHtml(error.message)}</div>`;
+    setStatus(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function fetchKathaValidationData() {
   if (!hasRequiredInputs()) {
     setStatus("Select district, taluk, hobli, village, survey, surnoc and hissa first");
@@ -3475,6 +3710,10 @@ async function fetchAllData(event) {
   event.preventDefault();
   if (isAutoGenWorkspace()) {
     await fetchAutoGenReport();
+    return;
+  }
+  if (isDailyMutationsWorkspace()) {
+    await fetchDailyMutationsData();
     return;
   }
   if (isMrDownloaderWorkspace()) {
@@ -3592,7 +3831,7 @@ function exportFilename(payload) {
 
 function reportNameParts() {
   const selected = values();
-  const overview = cachedReport?.overview || cachedAutoGenReport?.overview || cachedMrDownloader?.overview || cachedDownloadRtcs?.overview || cachedScanRtcs?.overview || cachedVillageScan?.overview || cachedKathaValidation?.overview || {};
+  const overview = cachedReport?.overview || cachedAutoGenReport?.overview || cachedDailyMutations?.overview || cachedMrDownloader?.overview || cachedDownloadRtcs?.overview || cachedScanRtcs?.overview || cachedVillageScan?.overview || cachedKathaValidation?.overview || {};
   return {
     village: selected.villageLabel || overview.village || "Village",
     survey: selected.survey || overview.survey || "Survey",
@@ -3624,6 +3863,7 @@ function applySavedReportState(saved) {
   if (!state?.reports) throw new Error("Saved report payload is invalid.");
   cachedReport = state.reports.fullLegalReport || null;
   cachedAutoGenReport = state.reports.autoGenReport || null;
+  cachedDailyMutations = state.reports.dailyMutations || null;
   cachedMrDownloader = state.reports.mrDownloader || null;
   cachedDownloadRtcs = state.reports.downloadRtcs || null;
   cachedScanRtcs = state.reports.scanRtcs || null;
@@ -3823,6 +4063,10 @@ window.addEventListener("afterprint", () => {
   }
   if (cachedVillageScan && isVillageScanWorkspace()) {
     setStatus("Village Scan data ready");
+    return;
+  }
+  if (cachedDailyMutations && isDailyMutationsWorkspace()) {
+    setStatus("Daily Mutations Report ready");
     return;
   }
   if (cachedKathaValidation && isKathaValidationWorkspace()) {
