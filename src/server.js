@@ -71,8 +71,13 @@ const AWS_DYNAMODB_TABLE = process.env.AWS_DYNAMODB_TABLE || "";
 const AWS_S3_BUCKET = process.env.AWS_S3_BUCKET || "";
 const AWS_S3_PREFIX = (process.env.AWS_S3_PREFIX || "ssvd-report-store").replace(/^\/+|\/+$/g, "");
 const AWS_SECRETS_ID = process.env.AWS_SECRETS_ID || "";
-const AWS_SES_FROM_EMAIL = process.env.AWS_SES_FROM_EMAIL || "";
-const APP_PUBLIC_URL = (process.env.APP_PUBLIC_URL || process.env.PUBLIC_APP_URL || "").replace(/\/+$/g, "");
+function awsSesFromEmail() {
+  return process.env.AWS_SES_FROM_EMAIL || "";
+}
+
+function appPublicUrl() {
+  return (process.env.APP_PUBLIC_URL || process.env.PUBLIC_APP_URL || "").replace(/\/+$/g, "");
+}
 const REPORT_WORKSPACES = [
   { id: "fullLegalReport", name: "Full Legal Report" },
   { id: "landAutoGenReport", name: "Land AutoGen Report" },
@@ -5673,14 +5678,15 @@ function splitEmails(value = "") {
 }
 
 function absoluteAppUrl(path = "") {
-  const prefix = APP_PUBLIC_URL || `http://${HOST === "0.0.0.0" ? "127.0.0.1" : HOST}:${PORT}`;
+  const prefix = appPublicUrl() || `http://${HOST === "0.0.0.0" ? "127.0.0.1" : HOST}:${PORT}`;
   return `${prefix}${String(path || "").startsWith("/") ? path : `/${path}`}`;
 }
 
 async function sendDailyMutationEmail(schedule = {}, report = {}) {
   const emails = splitEmails(schedule.emails);
+  const sourceEmail = awsSesFromEmail();
   if (!emails.length) return { sent: false, reason: "No email recipients configured." };
-  if (!AWS_SES_FROM_EMAIL) return { sent: false, reason: "AWS_SES_FROM_EMAIL is not configured." };
+  if (!sourceEmail) return { sent: false, reason: "AWS_SES_FROM_EMAIL is not configured." };
   try {
     const [{ SESClient, SendEmailCommand }] = await Promise.all([
       import("@aws-sdk/client-ses"),
@@ -5688,7 +5694,7 @@ async function sendDailyMutationEmail(schedule = {}, report = {}) {
     const client = new SESClient({ region: AWS_REGION });
     const pdfUrl = report.pdf?.downloadUrl ? absoluteAppUrl(report.pdf.downloadUrl) : "";
     await client.send(new SendEmailCommand({
-      Source: AWS_SES_FROM_EMAIL,
+      Source: sourceEmail,
       Destination: { ToAddresses: emails },
       Message: {
         Subject: { Charset: "UTF-8", Data: `Daily Mutations Report - ${schedule.hobliLabel || schedule.hobli || "Hobli"}` },
@@ -5761,7 +5767,7 @@ async function runDueDailyMutationSchedules() {
         const result = await runDailyMutationSchedule(schedule);
         schedule.lastRunDate = today;
         schedule.lastRunAt = result.ranAt;
-        schedule.lastStatus = "Completed";
+        schedule.lastStatus = result.email?.sent ? "Completed and emailed" : `Completed, email not sent: ${result.email?.reason || "Unknown email error"}`;
         schedule.lastReport = {
           generatedAt: result.report.generatedAt,
           totalMutations: result.report.overview?.totalMutations || 0,
@@ -5992,7 +5998,7 @@ async function handleApi(req, res) {
       const result = await runDailyMutationSchedule(schedule);
       schedule.lastRunDate = todayInIst();
       schedule.lastRunAt = result.ranAt;
-      schedule.lastStatus = "Completed";
+      schedule.lastStatus = result.email?.sent ? "Completed and emailed" : `Completed, email not sent: ${result.email?.reason || "Unknown email error"}`;
       schedule.lastReport = {
         generatedAt: result.report.generatedAt,
         totalMutations: result.report.overview?.totalMutations || 0,
