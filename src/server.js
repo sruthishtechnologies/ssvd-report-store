@@ -4337,6 +4337,359 @@ async function fetchDailyMutationsReport(values = {}, options = {}) {
   return report;
 }
 
+const MOJINI_BASE_URL = "https://clws.karnataka.gov.in/service27";
+
+function parseMojiniPayload(text = "") {
+  let value = String(text || "").trim();
+  for (let index = 0; index < 4; index += 1) {
+    if (typeof value !== "string") return value;
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    if (!/^[\[{"]/.test(trimmed)) return trimmed;
+    try {
+      value = JSON.parse(trimmed);
+    } catch {
+      return trimmed.replace(/^"|"$/g, "");
+    }
+  }
+  return value;
+}
+
+async function mojiniPost(path, payload, options = {}) {
+  const response = await officialFetch(`${MOJINI_BASE_URL}${path}`, {
+    method: "POST",
+    timeoutMs: options.timeoutMs || OFFICIAL_FETCH_TIMEOUT_MS,
+    retries: 1,
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/json; charset=utf-8",
+      origin: "https://clws.karnataka.gov.in",
+      referer: `${MOJINI_BASE_URL}/report/Applicationdetails`,
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body: JSON.stringify(payload),
+  }, "Mojini service");
+  const text = await response.text();
+  if (!response.ok) throw new Error(`Mojini service returned HTTP ${response.status}`);
+  return parseMojiniPayload(text);
+}
+
+async function mojiniFormPost(path, payload, options = {}) {
+  const response = await officialFetch(`${MOJINI_BASE_URL}${path}`, {
+    method: "POST",
+    timeoutMs: options.timeoutMs || OFFICIAL_FETCH_TIMEOUT_MS,
+    retries: 1,
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+      origin: "https://clws.karnataka.gov.in",
+      referer: `${MOJINI_BASE_URL}/report/Applicationdetails`,
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body: new URLSearchParams(payload),
+  }, "Mojini service");
+  const text = await response.text();
+  if (!response.ok) throw new Error(`Mojini service returned HTTP ${response.status}`);
+  return parseMojiniPayload(text);
+}
+
+function pickMojiniOption(options = [], wantedValue = "", wantedLabel = "", valueKeys = ["Value"], labelKeys = ["Text"]) {
+  const normalized = options.map((item) => ({
+    id: String(valueKeys.map((key) => item?.[key]).find((value) => value !== undefined && value !== null) ?? "").trim(),
+    name: String(labelKeys.map((key) => item?.[key]).find((value) => value !== undefined && value !== null) ?? "").trim(),
+    raw: item,
+  })).filter((item) => item.id || item.name);
+  const value = String(wantedValue || "").trim();
+  const label = normalizePlace(wantedLabel || "");
+  return normalized.find((item) => value && item.id === value)
+    || normalized.find((item) => label && normalizePlace(item.name) === label)
+    || normalized.find((item) => label && (normalizePlace(item.name).includes(label) || label.includes(normalizePlace(item.name))))
+    || normalized[0]
+    || null;
+}
+
+async function resolveMojiniLocation(values = {}) {
+  const district = numberString(values.district);
+  if (!district) throw new Error("District is required for Mojini search.");
+  const taluksPayload = await mojiniPost("/Report/GetTalukList", { Districtcode: district });
+  const taluk = pickMojiniOption(Array.isArray(taluksPayload) ? taluksPayload : [], values.taluk, values.talukLabel, ["Value"], ["Text"]);
+  if (!taluk) throw new Error("Mojini taluk list did not return a matching taluk.");
+  const hoblisPayload = await mojiniFormPost("/Report/GetHobliList", { Districtcode: district, TalukCode: taluk.id });
+  const hobli = pickMojiniOption(Array.isArray(hoblisPayload) ? hoblisPayload : [], values.hobli, values.hobliLabel, ["HobliCode"], ["HobliName"]);
+  if (!hobli) throw new Error("Mojini hobli list did not return a matching hobli.");
+  const villagesPayload = await mojiniFormPost("/Report/FillliveVillage", { Districtcode: district, TalukCode: taluk.id, Hoblicode: hobli.id });
+  const villages = Array.isArray(villagesPayload) ? villagesPayload : [];
+  const village = pickMojiniOption(villages, values.village, values.villageLabel, ["VillageCodee"], ["VillageName"]);
+  if (!village) throw new Error("Mojini village list did not return a matching village.");
+  return {
+    district,
+    taluk: taluk.id,
+    hobli: hobli.id,
+    village: village.id,
+    talukLabel: taluk.name,
+    hobliLabel: hobli.name,
+    villageLabel: village.name,
+    villages,
+  };
+}
+
+function pickMojiniSurnocOption(options = [], values = {}) {
+  return pickMojiniOption(options, values.surnocLabel || values.surnoc, values.surnocLabel || values.surnoc, ["surnocid"], ["surnocname"]);
+}
+
+function pickMojiniHissaOption(options = [], values = {}) {
+  const wanted = String(values.hissaLabel || values.hissa || "").trim();
+  const normalized = options.map((item) => ({
+    id: String(item?.HissaNo ?? "").trim(),
+    name: String(item?.HissaNo ?? "").trim(),
+    raw: item,
+  })).filter((item) => item.id || item.name);
+  if (!wanted) return normalized[0] || null;
+  const key = normalizePlace(wanted);
+  return normalized.find((item) => item.id === wanted || normalizePlace(item.name) === key) || null;
+}
+
+function mojiniRecordFromResponse(result = {}, section = "") {
+  const statusRows = Array.isArray(result.trackStatusList)
+    ? result.trackStatusList
+    : parseMojiniPayload(result.trackStatusList || "[]");
+  return {
+    section,
+    applicationNumber: result.TransAppNo || result.ApplicationNo || result.ApplNo || result.AppNo || result.ApplicationNumber || "",
+    trackStatus: result.Status || result.status || result.message || (result.ApplicationNumber ? "Available" : ""),
+    talukName: result.TalukName || result.talukName || result.Taluk || "",
+    villageName: result.VillageName || result.villageName || result.Village || "",
+    applicationType: result.TypeofApplication || result.TypeOfApplication || result.ApplicationType || result.type || "",
+    surveyNumber: result.SurveyNo || result.SurveyNumber || result.surveyNo || "",
+    applicationDate: result.ApplicationDate || result.ApplDate || result.Date || "",
+    applicantName: result.ApplicantName || result.ApplicationName || result.Applicant || result.Name || "",
+    mobileNumber: result.MobileNumber || result.MobileNo || result.Mobile || "",
+    officerName: result.OfficerName || "",
+    queueMessage: result.message || "",
+    stageHistory: Array.isArray(statusRows) ? statusRows.map((row) => ({
+      stage: row.stage || row.Stage || "",
+      description: row.Description || row.description || "",
+      entryDate: row.EntryDate || "",
+      completionDate: row.ComplitionDate || row.CompletionDate || "",
+    })) : [],
+    raw: result,
+  };
+}
+
+async function fetchMojiniSurveySection(values = {}, databaseCon = "1", location = null) {
+  const resolved = location || await resolveMojiniLocation(values);
+  const dist = resolved.district;
+  const taluk = resolved.taluk;
+  const hobli = resolved.hobli;
+  const village = resolved.village;
+  const survey = String(values.survey || "").trim();
+  if (!dist || !taluk || !hobli || !village || !survey) throw new Error("District, taluk, hobli, village and survey number are required.");
+  const surnocOptionsPayload = await mojiniFormPost("/Report/FillSurnocNo", {
+    hoblicode: hobli,
+    District: dist,
+    Taluk: taluk,
+    villagecode: village,
+    surveyno: survey,
+    DatabaseCon: databaseCon,
+  });
+  const surnocOptions = Array.isArray(surnocOptionsPayload) ? surnocOptionsPayload : [];
+  const surnocOption = pickMojiniSurnocOption(surnocOptions, values);
+  if (!surnocOption) {
+    return {
+      records: [],
+      message: "No matching Surnoc option was returned by Mojini.",
+      surnocOptions,
+    };
+  }
+  const hissaOptionsPayload = await mojiniFormPost("/Report/FillHissaNo", {
+    hoblicode: hobli,
+    District: dist,
+    Taluk: taluk,
+    villagecode: village,
+    surveyno: survey,
+    Surnoc: surnocOption.id,
+    DatabaseCon: databaseCon,
+  });
+  const hissaOptions = Array.isArray(hissaOptionsPayload) ? hissaOptionsPayload : [];
+  const hissaOption = pickMojiniHissaOption(hissaOptions, values);
+  if (!hissaOption) {
+    return {
+      records: [],
+      message: "No matching Hissa option was returned by Mojini.",
+      surnocOptions,
+      hissaOptions,
+      selectedSurnocOption: surnocOption,
+    };
+  }
+  const result = await mojiniPost("/Report/GetAllotDetails", {
+    TransAppNo: null,
+    MobileNo: null,
+    SurveyNo: survey,
+    District: dist,
+    Taluk: taluk,
+    Hobli: hobli,
+    Village: village,
+    Hissa: hissaOption.id,
+    SurnocNo: surnocOption.id,
+    DatabaseCon: databaseCon,
+  }, { timeoutMs: REPORT_TASK_TIMEOUT_MS });
+  if (typeof result === "string") {
+    return {
+      records: [],
+      message: /no application/i.test(result) ? "No Application for this Survey No" : result,
+      surnocOptions,
+      hissaOptions,
+      selectedSurnocOption: surnocOption,
+      selectedHissaOption: hissaOption,
+    };
+  }
+  if (Array.isArray(result)) {
+    return {
+      records: result.map((item) => mojiniRecordFromResponse(item, databaseCon === "1" ? "Latest" : "Archived")),
+      message: `${result.length} record(s) returned.`,
+      surnocOptions,
+      hissaOptions,
+      selectedSurnocOption: surnocOption,
+      selectedHissaOption: hissaOption,
+    };
+  }
+  return {
+    records: [mojiniRecordFromResponse(result, databaseCon === "1" ? "Latest" : "Archived")],
+    message: "1 record returned.",
+    surnocOptions,
+    hissaOptions,
+    selectedSurnocOption: surnocOption,
+    selectedHissaOption: hissaOption,
+  };
+}
+
+async function fetchSurveyBoundaryForLocation(values = {}, location = null) {
+  const [latestResult, archivedResult] = await Promise.allSettled([
+    fetchMojiniSurveySection(values, "1", location),
+    fetchMojiniSurveySection(values, "2", location),
+  ]);
+  const sectionResult = (result, fallback) => (result.status === "fulfilled"
+    ? result.value
+    : { records: [], message: result.reason?.message || fallback });
+  const latest = sectionResult(latestResult, "Latest Record fetch failed.");
+  const archived = sectionResult(archivedResult, "Archived Section fetch failed.");
+  const resolved = location || {};
+  return {
+    generatedAt: new Date().toISOString(),
+    overview: {
+      district: values.districtLabel || values.district || "",
+      taluk: values.talukLabel || values.taluk || "",
+      hobli: values.hobliLabel || values.hobli || "",
+      village: values.villageLabel || values.village || "",
+      survey: values.survey || "",
+      surnoc: values.surnocLabel || values.surnoc || "",
+      hissa: values.hissaLabel || values.hissa || "",
+      source: "Mojini CLWS",
+      totalRecords: (latest.records || []).length + (archived.records || []).length,
+      mojiniTaluk: resolved.talukLabel || resolved.taluk || "",
+      mojiniHobli: resolved.hobliLabel || resolved.hobli || "",
+      mojiniVillage: resolved.villageLabel || resolved.village || "",
+    },
+    latest,
+    archived,
+  };
+}
+
+async function findMojiniVillageWithSurveyRecords(values = {}, location = {}) {
+  for (const village of location.villages || []) {
+    const candidate = {
+      ...location,
+      village: String(village.VillageCodee ?? ""),
+      villageLabel: String(village.VillageName ?? ""),
+    };
+    if (!candidate.village || candidate.village === location.village) continue;
+    const report = await fetchSurveyBoundaryForLocation(values, candidate);
+    if (surveyBoundaryHasExactRecord(report, values)) {
+      report.overview.mojiniVillageResolvedBySurvey = true;
+      return report;
+    }
+  }
+  return null;
+}
+
+function surveyBoundaryHasExactRecord(report = {}, values = {}) {
+  const expected = normalizePlace([
+    values.survey,
+    values.surnocLabel || values.surnoc || "*",
+    values.hissaLabel || values.hissa || "",
+  ].filter(Boolean).join("/"));
+  if (!expected) return false;
+  return [...(report.latest?.records || []), ...(report.archived?.records || [])]
+    .some((record) => normalizePlace(record.surveyNumber || "").includes(expected));
+}
+
+function surveyBoundarySectionTable(section = {}) {
+  return {
+    header: [
+      "Application Number",
+      "Track Status",
+      "Taluk",
+      "Village",
+      "Type",
+      "Survey Number",
+      "Application Date",
+      "Applicant",
+      "Mobile",
+    ],
+    rows: (section.records || []).map((record) => [
+      record.applicationNumber || "-",
+      record.trackStatus || "-",
+      record.talukName || "-",
+      record.villageName || "-",
+      record.applicationType || "-",
+      record.surveyNumber || "-",
+      record.applicationDate || "-",
+      record.applicantName || "-",
+      record.mobileNumber || "-",
+    ]),
+  };
+}
+
+function addSurveyBoundaryPrintableSections(report = {}) {
+  return {
+    ...report,
+    sections: [
+      {
+        title: "Selected Land",
+        status: "Mojini CLWS",
+        table: {
+          rows: [
+            ["District", report.overview?.district || "-"],
+            ["Taluk", report.overview?.taluk || "-"],
+            ["Hobli", report.overview?.hobli || "-"],
+            ["Village", report.overview?.village || "-"],
+            ["Survey / Hissa", `${report.overview?.survey || "-"} / ${report.overview?.hissa || "-"}`],
+            ["Mojini Village", report.overview?.mojiniVillage || "-"],
+          ],
+        },
+      },
+      {
+        title: "Latest",
+        status: report.latest?.message || `${report.latest?.records?.length || 0} record(s)`,
+        table: surveyBoundarySectionTable(report.latest),
+      },
+      {
+        title: "Archived",
+        status: report.archived?.message || `${report.archived?.records?.length || 0} record(s)`,
+        table: surveyBoundarySectionTable(report.archived),
+      },
+    ],
+  };
+}
+
+async function fetchSurveyBoundaryReport(values = {}) {
+  const location = await resolveMojiniLocation(values);
+  const report = await fetchSurveyBoundaryForLocation(values, location);
+  if (report.overview.totalRecords > 0) return addSurveyBoundaryPrintableSections(report);
+  const fallback = await findMojiniVillageWithSurveyRecords(values, location);
+  return addSurveyBoundaryPrintableSections(fallback || report);
+}
+
 async function fetchKathaValidationReport(values) {
   const [currentRtcSection, khathaSection, advancedResult] = await Promise.allSettled([
     fetchRtcSection("current", values),
@@ -4942,6 +5295,7 @@ const AUTO_GEN_SERVICE_STEPS = [
   { id: "scanRtcs", title: "Scan RTCs", status: "Prepare Scan RTCs", type: "scanRtcs" },
   { id: "kathaValidation", title: "Katha Validation", status: "Validate Katha", type: "kathaValidation" },
   { id: "villageScan", title: "Village Scan", status: "Fetch Village Scan", type: "villageScan" },
+  { id: "surveyBoundary", title: "Survey & Boundary Report", status: "Fetch Survey & Boundary Report", type: "surveyBoundary" },
 ];
 
 function autoGenOverview(values = {}) {
@@ -4997,6 +5351,13 @@ async function fetchAutoGenStep(step, values) {
       fetchVillageScanReport(values),
       REPORT_TASK_TIMEOUT_MS,
       "Village Scan took too long. Please try again.",
+    );
+  }
+  if (step.type === "surveyBoundary") {
+    return withReportTimeout(
+      fetchSurveyBoundaryReport(values),
+      OLD_RTC_TASK_TIMEOUT_MS,
+      "Survey & Boundary Report took too long. Please try again.",
     );
   }
   throw new Error(`Unknown AutoGen step: ${step.title}`);
@@ -5116,11 +5477,11 @@ async function generateAutoGenReport(values = {}, options = {}) {
     data: overview,
   }];
 
-  for (const step of serviceSteps) {
+  const serviceResults = await Promise.all(serviceSteps.map(async (step) => {
     const startedAt = new Date().toISOString();
     try {
       const data = await fetchAutoGenStep(step, values);
-      steps.push({
+      return {
         id: step.id,
         title: step.title,
         type: step.type,
@@ -5129,9 +5490,9 @@ async function generateAutoGenReport(values = {}, options = {}) {
         startedAt,
         completedAt: new Date().toISOString(),
         data,
-      });
+      };
     } catch (error) {
-      steps.push({
+      return {
         id: step.id,
         title: step.title,
         type: step.type,
@@ -5140,9 +5501,10 @@ async function generateAutoGenReport(values = {}, options = {}) {
         error: error.message,
         startedAt,
         completedAt: new Date().toISOString(),
-      });
+      };
     }
-  }
+  }));
+  steps.push(...serviceResults);
 
   const report = {
     generatedAt: new Date().toISOString(),
@@ -5551,7 +5913,14 @@ async function portalHealth() {
 async function readJson(req) {
   let body = "";
   for await (const chunk of req) body += chunk;
-  return body ? JSON.parse(body) : {};
+  if (!body) return {};
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    const extracted = firstJsonPayload(body);
+    if (extracted && extracted !== body) return JSON.parse(extracted);
+    throw error;
+  }
 }
 
 function defaultAdminStore() {
@@ -6198,6 +6567,17 @@ async function handleApi(req, res) {
         fetchKathaValidationReport(body.values || {}),
         REPORT_TASK_TIMEOUT_MS,
         "Katha Validation took too long. Please try again.",
+      );
+      json(res, 200, report);
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/survey-boundary-report") {
+      const body = await readJson(req);
+      const report = await withReportTimeout(
+        fetchSurveyBoundaryReport(body.values || {}),
+        OLD_RTC_TASK_TIMEOUT_MS,
+        "Survey & Boundary Report took too long. Please try again.",
       );
       json(res, 200, report);
       return;

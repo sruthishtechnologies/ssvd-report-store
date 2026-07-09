@@ -215,6 +215,7 @@ let cachedDailyMutations = null;
 let cachedKathaValidation = null;
 let cachedDownloadRtcs = null;
 let cachedScanRtcs = null;
+let cachedSurveyBoundary = null;
 let cachedAutoGenReport = null;
 let cachedScoreCard = null;
 let cachedFeatureReports = {};
@@ -254,7 +255,7 @@ function hasWorkspaceAccess(workspaceId) {
 }
 
 function usesLandDetails() {
-  return !isAdminWorkspace() && (isFullLegalWorkspace() || isAutoGenWorkspace() || isDailyMutationsWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace());
+  return !isAdminWorkspace() && (isFullLegalWorkspace() || isAutoGenWorkspace() || isDailyMutationsWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace() || isSurveyBoundaryWorkspace());
 }
 
 function isFeatureWorkspace() {
@@ -471,7 +472,7 @@ async function getJson(path) {
 
 function setExportAvailability() {
   controls.exportData.disabled = !cachedReport || activeWorkspace.id !== "fullLegalReport";
-  const hasAnySavedData = Boolean(cachedReport || cachedAutoGenReport || cachedDailyMutations || cachedMrDownloader || cachedDownloadRtcs || cachedScanRtcs || cachedVillageScan || cachedKathaValidation || cachedScoreCard || Object.keys(cachedFeatureReports || {}).length);
+  const hasAnySavedData = Boolean(cachedReport || cachedAutoGenReport || cachedDailyMutations || cachedMrDownloader || cachedDownloadRtcs || cachedScanRtcs || cachedVillageScan || cachedKathaValidation || cachedSurveyBoundary || cachedScoreCard || Object.keys(cachedFeatureReports || {}).length);
   controls.saveReport.disabled = !hasAnySavedData;
   controls.downloadFolder.disabled = !hasAnySavedData;
 }
@@ -555,6 +556,10 @@ function isAutoGenWorkspace() {
 
 function isDailyMutationsWorkspace() {
   return activeWorkspace.id === "dailyMutationsReport";
+}
+
+function isSurveyBoundaryWorkspace() {
+  return activeWorkspace.id === "surveyBoundaryReport";
 }
 
 function isScoreCardWorkspace() {
@@ -654,6 +659,7 @@ function currentReportDataStore() {
     villageScan: cachedVillageScan,
     dailyMutations: cachedDailyMutations,
     kathaValidation: cachedKathaValidation,
+    surveyBoundary: cachedSurveyBoundary,
     scoreCard: cachedScoreCard,
     featureReports: cachedFeatureReports,
     exportPayload: cachedExportPayload,
@@ -731,7 +737,7 @@ function manualEvidencePanel() {
   `;
 }
 
-function baseFeatureShell(title, subtitle, body) {
+function baseFeatureShell(title, subtitle, body, options = {}) {
   return `
     <article class="feature-report">
       <section class="summary-block feature-hero">
@@ -743,7 +749,7 @@ function baseFeatureShell(title, subtitle, body) {
         ], 8)}</table>
       </section>
       ${body}
-      ${manualEvidencePanel()}
+      ${options.hideManualEvidence ? "" : manualEvidencePanel()}
     </article>
   `;
 }
@@ -859,16 +865,78 @@ function renderKaveriReadiness() {
   return baseFeatureShell("Kaveri Readiness", "Registration and EC workflow checklist", `<section class="summary-block">${featureTable(["Checklist", "Status", "Validation"], rows)}</section>`);
 }
 
-function renderSurveyBoundaryReport() {
-  const rows = [
-    ["Akarband", hasFetchedSection("Akarband") ? "Good" : "Need to Check", "Compare official extent and sketch."],
-    ["11E / podi / tippani", "Need to Check", "Fetch Mojini survey documents if subdivision exists."],
-    ["Boundary stones / hissa boundary", "Need to Check", "Physical verification with surveyor recommended."],
-    ["Access road", "Need to Check", "Confirm legal access and road width."],
-    ["Neighbour boundary confirmation", "Need to Check", "Record local verification notes."],
-    ["Map mismatch", "Need to Check", "Compare RTC, Akarband, Dishaank/Bhoomi Maps and site."],
+function renderSurveyBoundaryReport(report = cachedSurveyBoundary) {
+  const selected = values();
+  const selectedRows = report ? [
+    ["District", report.overview?.district || "-"],
+    ["Taluk", report.overview?.taluk || "-"],
+    ["Hobli", report.overview?.hobli || "-"],
+    ["Village", report.overview?.village || "-"],
+    ["Survey / Hissa", `${report.overview?.survey || "-"} / ${report.overview?.hissa || "-"}`],
+    ["Mojini Village", report.overview?.mojiniVillage || "-"],
+  ] : [
+    ["District", selected.districtLabel || "-"],
+    ["Taluk", selected.talukLabel || "-"],
+    ["Hobli", selected.hobliLabel || "-"],
+    ["Village", selected.villageLabel || "-"],
+    ["Survey / Hissa", `${selected.survey || "-"} / ${selected.hissaLabel || selected.hissa || "-"}`],
   ];
-  return baseFeatureShell("Survey & Boundary Report", "Survey document and physical boundary validation", `<section class="summary-block">${featureTable(["Item", "Status", "Action"], rows)}</section>`);
+  if (report) {
+    const sections = [
+      ["Latest", report.latest],
+      ["Archived", report.archived],
+    ];
+    return `
+      <article class="feature-report survey-boundary-report">
+      <section class="summary-block">
+        <div class="section-title"><h3>Selected Land</h3><span>${escapeHtml(report.generatedAt ? new Date(report.generatedAt).toLocaleString() : "")}</span></div>
+        ${featureTable(["Field", "Value"], selectedRows)}
+      </section>
+      ${sections.map(([title, section]) => `
+        <section class="summary-block">
+          <div class="section-title"><h3>${title}</h3><span>${section?.message ? escapeHtml(section.message) : `${section?.records?.length || 0} record(s)`}</span></div>
+          ${section?.records?.length ? featureTable([
+            "Application Number",
+            "Track Status",
+            "Taluk",
+            "Village",
+            "Type",
+            "Survey Number",
+            "Application Date",
+            "Applicant",
+            "Mobile",
+          ], section.records.map((record) => [
+            record.applicationNumber || "-",
+            record.trackStatus || "-",
+            record.talukName || "-",
+            record.villageName || "-",
+            record.applicationType || "-",
+            record.surveyNumber || "-",
+            record.applicationDate || "-",
+            record.applicantName || "-",
+            record.mobileNumber || "-",
+          ])) : `<p>No Mojini applications found in ${title} records for this survey number.</p>`}
+        </section>
+      `).join("")}
+      </article>
+    `;
+  }
+  return `
+    <article class="feature-report survey-boundary-report">
+      <section class="summary-block">
+        <div class="section-title"><h3>Selected Land</h3><span>Ready for Mojini search</span></div>
+        ${featureTable(["Field", "Value"], selectedRows)}
+      </section>
+      <section class="summary-block">
+        <div class="section-title"><h3>Latest</h3><span>Not fetched</span></div>
+        <p>Click Fetch Mojini Records to search Latest Record by survey number.</p>
+      </section>
+      <section class="summary-block">
+        <div class="section-title"><h3>Archived</h3><span>Not fetched</span></div>
+        <p>Click Fetch Mojini Records to search Archived Section by survey number.</p>
+      </section>
+    </article>
+  `;
 }
 
 function renderVillageRiskRadar() {
@@ -1064,7 +1132,7 @@ function renderWorkspace() {
   controls.exportData.hidden = !isFullLegalWorkspace();
   controls.print.hidden = !(isFullLegalWorkspace() || isAutoGenWorkspace() || isDailyMutationsWorkspace() || isScoreCardWorkspace() || isFeatureWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace());
   controls.print.textContent = isAutoGenWorkspace() ? "Download Report" : "Print Report";
-  controls.fetchReport.textContent = isAutoGenWorkspace() ? "Generate Automated Report" : (isDailyMutationsWorkspace() ? "Generate Daily Report" : (isVillageScanWorkspace() ? "Fetch Village Data" : (isKathaValidationWorkspace() ? "Validate Katha" : (isDownloadRtcsWorkspace() ? "Download RTCs" : (isScanRtcsWorkspace() ? "Scan RTCs" : "Fetch Data")))));
+  controls.fetchReport.textContent = isAutoGenWorkspace() ? "Generate Automated Report" : (isDailyMutationsWorkspace() ? "Generate Daily Report" : (isVillageScanWorkspace() ? "Fetch Village Data" : (isKathaValidationWorkspace() ? "Validate Katha" : (isSurveyBoundaryWorkspace() ? "Fetch Mojini Records" : (isDownloadRtcsWorkspace() ? "Download RTCs" : (isScanRtcsWorkspace() ? "Scan RTCs" : "Fetch Data"))))));
   controls.survey.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace());
   controls.surnoc.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace());
   controls.hissa.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace());
@@ -1166,6 +1234,7 @@ function clearCachedReport() {
   cachedKathaValidation = null;
   cachedDownloadRtcs = null;
   cachedScanRtcs = null;
+  cachedSurveyBoundary = null;
   cachedAutoGenReport = null;
   cachedScoreCard = null;
   cachedFeatureReports = {};
@@ -2257,6 +2326,7 @@ const autoGenSteps = [
   { id: "scanRtcs", title: "Scan RTCs", status: "Prepare Scan RTCs", type: "scanRtcs" },
   { id: "kathaValidation", title: "Katha Validation", status: "Validate Katha", type: "kathaValidation" },
   { id: "villageScan", title: "Village Scan", status: "Fetch Village Scan", type: "villageScan" },
+  { id: "surveyBoundary", title: "Survey & Boundary Report", status: "Fetch Survey & Boundary Report", type: "surveyBoundary" },
 ];
 
 function renderWithOutput(renderer) {
@@ -2282,6 +2352,11 @@ function renderAutoGenServiceHtml(step, data) {
   if (step.type === "scanRtcs") return renderWithOutput(() => renderScanRtcsReport(data));
   if (step.type === "kathaValidation") return renderWithOutput(() => renderKathaValidationReport(data));
   if (step.type === "villageScan") return renderWithOutput(() => renderVillageScanReport(data));
+  if (step.type === "surveyBoundary") {
+    return renderWithOutput(() => {
+      controls.reportOutput.innerHTML = renderSurveyBoundaryReport(data);
+    });
+  }
   return `<section class="print-section"><h2>${escapeHtml(step.title)}</h2><p>No renderer configured.</p></section>`;
 }
 
@@ -2355,6 +2430,7 @@ async function fetchAutoGenStep(step, baseValues) {
   if (step.type === "scanRtcs") return api("/api/scan-rtcs", { sessionId, values: baseValues });
   if (step.type === "kathaValidation") return api("/api/katha-validation", { sessionId, values: baseValues });
   if (step.type === "villageScan") return api("/api/village-scan", { sessionId, values: baseValues });
+  if (step.type === "surveyBoundary") return api("/api/survey-boundary-report", { sessionId, values: baseValues });
   throw new Error(`Unknown AutoGen step: ${step.title}`);
 }
 
@@ -2383,32 +2459,43 @@ async function fetchAutoGenReport() {
   setBusy(true);
   renderAutoGenReport(cachedAutoGenReport);
   try {
-    for (const step of cachedAutoGenReport.steps) {
+    cachedAutoGenReport.steps.forEach((step) => {
       step.state = "running";
       step.message = `${step.status}...`;
-      cachedAutoGenReport.message = step.message;
-      setStatus(step.message);
-      renderAutoGenReport(cachedAutoGenReport);
+    });
+    cachedAutoGenReport.message = `Fetching ${cachedAutoGenReport.steps.length} service(s) in parallel...`;
+    setStatus(cachedAutoGenReport.message);
+    renderAutoGenReport(cachedAutoGenReport);
+
+    await Promise.all(cachedAutoGenReport.steps.map(async (step) => {
       try {
         const data = await fetchAutoGenStep(step, baseValues);
         const html = renderAutoGenServiceHtml(step, data);
-        cachedAutoGenReport.sections.push({ id: step.id, title: step.title, html, data });
+        const section = { id: step.id, title: step.title, html, data };
+        const existingIndex = cachedAutoGenReport.sections.findIndex((item) => item.id === step.id);
+        if (existingIndex >= 0) cachedAutoGenReport.sections[existingIndex] = section;
+        else cachedAutoGenReport.sections.push(section);
+        cachedAutoGenReport.sections.sort((a, b) => autoGenSteps.findIndex((item) => item.id === a.id) - autoGenSteps.findIndex((item) => item.id === b.id));
         step.state = "completed";
         step.message = "Completed";
         cachedAutoGenReport.message = `${step.title} completed`;
       } catch (error) {
         step.state = "failed";
         step.message = error.message;
-        cachedAutoGenReport.sections.push({
+        const section = {
           id: step.id,
           title: step.title,
           html: `<section class="print-section"><h2>${escapeHtml(step.title)}</h2><div class="error-card">${escapeHtml(error.message)}</div></section>`,
           error: error.message,
-        });
-        cachedAutoGenReport.message = `${step.title} failed, continuing next service`;
+        };
+        const existingIndex = cachedAutoGenReport.sections.findIndex((item) => item.id === step.id);
+        if (existingIndex >= 0) cachedAutoGenReport.sections[existingIndex] = section;
+        else cachedAutoGenReport.sections.push(section);
+        cachedAutoGenReport.sections.sort((a, b) => autoGenSteps.findIndex((item) => item.id === a.id) - autoGenSteps.findIndex((item) => item.id === b.id));
+        cachedAutoGenReport.message = `${step.title} failed`;
       }
       renderAutoGenReport(cachedAutoGenReport);
-    }
+    }));
     cachedAutoGenReport.ready = true;
     cachedAutoGenReport.message = "Final Report Ready";
     renderAutoGenReport(cachedAutoGenReport);
@@ -3717,6 +3804,30 @@ async function fetchKathaValidationData() {
   }
 }
 
+async function fetchSurveyBoundaryData() {
+  if (!hasRequiredInputs()) {
+    setStatus("Select district, taluk, hobli, village, survey, surnoc and hissa first");
+    return;
+  }
+  setBusy(true);
+  setStatus("Fetching Mojini survey and boundary records...");
+  controls.reportOutput.innerHTML = `<div class="loading-card">Searching Mojini Latest Record and Archived Section by survey number...</div>`;
+  try {
+    cachedSurveyBoundary = await api("/api/survey-boundary-report", { sessionId, values: values() });
+    cachedSurveyBoundary.fetchedAt = new Date().toISOString();
+    renderFeatureWorkspace();
+    const total = (cachedSurveyBoundary.latest?.records?.length || 0) + (cachedSurveyBoundary.archived?.records?.length || 0);
+    setStatus(`Survey & Boundary Report ready: ${total} Mojini record(s) found`);
+    setExportAvailability();
+  } catch (error) {
+    cachedSurveyBoundary = null;
+    controls.reportOutput.innerHTML = `<div class="error-card">${escapeHtml(error.message)}</div>`;
+    setStatus(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function fetchAllData(event) {
   event.preventDefault();
   if (isAutoGenWorkspace()) {
@@ -3745,6 +3856,10 @@ async function fetchAllData(event) {
   }
   if (isKathaValidationWorkspace()) {
     await fetchKathaValidationData();
+    return;
+  }
+  if (isSurveyBoundaryWorkspace()) {
+    await fetchSurveyBoundaryData();
     return;
   }
   if (!hasRequiredInputs()) {
@@ -3842,7 +3957,7 @@ function exportFilename(payload) {
 
 function reportNameParts() {
   const selected = values();
-  const overview = cachedReport?.overview || cachedAutoGenReport?.overview || cachedDailyMutations?.overview || cachedMrDownloader?.overview || cachedDownloadRtcs?.overview || cachedScanRtcs?.overview || cachedVillageScan?.overview || cachedKathaValidation?.overview || {};
+  const overview = cachedReport?.overview || cachedAutoGenReport?.overview || cachedDailyMutations?.overview || cachedMrDownloader?.overview || cachedDownloadRtcs?.overview || cachedScanRtcs?.overview || cachedVillageScan?.overview || cachedKathaValidation?.overview || cachedSurveyBoundary?.overview || {};
   return {
     village: selected.villageLabel || overview.village || "Village",
     survey: selected.survey || overview.survey || "Survey",
@@ -3880,6 +3995,7 @@ function applySavedReportState(saved) {
   cachedScanRtcs = state.reports.scanRtcs || null;
   cachedVillageScan = state.reports.villageScan || null;
   cachedKathaValidation = state.reports.kathaValidation || null;
+  cachedSurveyBoundary = state.reports.surveyBoundary || null;
   cachedScoreCard = state.reports.scoreCard || null;
   cachedFeatureReports = state.reports.featureReports || {};
   cachedExportPayload = state.reports.exportPayload || (cachedReport ? buildExportPayload(cachedReport) : null);
