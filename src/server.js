@@ -1384,12 +1384,58 @@ function wrapSvgText(value, maxChars = 42) {
   return lines.length ? lines.slice(0, 3) : ["-"];
 }
 
-function parseOfficialJson(text) {
-  const normalized = String(text || "")
+function firstJsonPayload(text = "") {
+  const value = String(text || "").trim();
+  const start = value.search(/[[{"]/);
+  if (start < 0) return value;
+  const source = value.slice(start);
+  const opener = source[0];
+  const closer = opener === "{" ? "}" : opener === "[" ? "]" : "\"";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === "\"") inString = false;
+      continue;
+    }
+    if (char === "\"") {
+      inString = true;
+      if (opener === "\"" && index > 0) return source.slice(0, index + 1);
+      continue;
+    }
+    if (char === opener && opener !== "\"") depth += 1;
+    if (char === closer && opener !== "\"") {
+      depth -= 1;
+      if (depth === 0) return source.slice(0, index + 1);
+    }
+  }
+  return source;
+}
+
+function normalizedOfficialJsonText(text = "") {
+  return String(text || "")
     .replace(/:\s*nodata(?=\s*[,}])/gi, ':"nodata"')
     .replace(/:\s*undefined(?=\s*[,}])/gi, ":null");
-  const parsed = JSON.parse(normalized);
-  return typeof parsed === "string" ? parseOfficialJson(parsed) : parsed;
+}
+
+function parseOfficialJson(text) {
+  const normalized = normalizedOfficialJsonText(text);
+  try {
+    const parsed = JSON.parse(normalized);
+    return typeof parsed === "string" ? parseOfficialJson(parsed) : parsed;
+  } catch (error) {
+    if (/\bnodata\b/i.test(normalized)) return { data: "nodata", parseWarning: error.message };
+    const payload = firstJsonPayload(normalized);
+    if (payload && payload !== normalized) {
+      const parsed = JSON.parse(payload);
+      return typeof parsed === "string" ? parseOfficialJson(parsed) : parsed;
+    }
+    throw error;
+  }
 }
 
 async function fetchAkarbandJson(path, payload = {}) {
