@@ -7,7 +7,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "check": "node --check src/server.js && node --check src/public/app.js",
+    "check": "node --check src/server.js && node --check src/public/app.js && node --check src/lib/echawadiHtml.js",
+    "test:daily-mutations": "node src/tools/test-daily-mutations-parser.mjs",
+    "test": "npm run test:daily-mutations",
     "start": "node src/server.js"
   },
   "dependencies": {

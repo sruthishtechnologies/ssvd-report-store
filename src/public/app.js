@@ -121,11 +121,95 @@ const workspaces = [
     status: "Village Scan selected",
   },
   {
+    id: "conversionWatch",
+    name: "Conversion Watch",
+    hint: "Land-conversion and related eChawadi signals for the selected village.",
+    status: "Conversion Watch selected",
+  },
+  {
+    id: "hobliPendencyDigest",
+    name: "Hobli Pendency Digest",
+    hint: "Hobli-level mutation snapshot plus official pendency dashboard links.",
+    status: "Hobli Pendency Digest selected",
+  },
+  {
+    id: "signedRtcMrPack",
+    name: "Signed RTC / MR Pack",
+    hint: "Bank/court-ready checklist and deep links to digitally signed RTC/MR portals.",
+    status: "Signed RTC / MR Pack selected",
+  },
+  {
+    id: "changeDiffReport",
+    name: "Change Diff Report",
+    hint: "Compare the currently loaded session against a previously saved report.",
+    status: "Change Diff Report selected",
+  },
+  {
     id: "admin",
     name: "Admin",
     hint: "User approvals, roles, report permissions and notices.",
     status: "Admin selected",
     adminOnly: true,
+  },
+];
+
+const parcelHubModes = [
+  { id: "services", name: "Services", hint: "Fetched Bhoomi service tabs" },
+  { id: "evidence", name: "Evidence", hint: "Evidence & gaps dashboard" },
+  { id: "gaps", name: "Gaps", hint: "Document gap finder" },
+  { id: "score", name: "Score", hint: "Land score card" },
+  { id: "timeline", name: "Timeline", hint: "Title chain timeline" },
+  { id: "katha", name: "Katha", hint: "Katha validation" },
+  { id: "map", name: "Map", hint: "BhoomiMaps and sketch links" },
+];
+
+/** Phase 1 shell: journey grouping only — workspace ids / APIs stay unchanged. */
+const journeys = [
+  {
+    id: "parcelPack",
+    name: "Parcel Pack",
+    hint: "Survey-level legal packs and due diligence",
+    workspaceIds: [
+      "fullLegalReport",
+      "landAutoGenReport",
+      "landScoreCard",
+      "dueDiligenceDashboard",
+      "documentGapFinder",
+      "titleChainTimeline",
+      "kathaValidation",
+      "changeDiffReport",
+    ],
+  },
+  {
+    id: "areaIntel",
+    name: "Area Intel",
+    hint: "Village and hobli mutation intelligence",
+    workspaceIds: [
+      "villageScan",
+      "villageRiskRadar",
+      "dailyMutationsReport",
+      "conversionWatch",
+      "hobliPendencyDigest",
+    ],
+  },
+  {
+    id: "documents",
+    name: "Documents",
+    hint: "Downloads, uploads and survey records",
+    workspaceIds: [
+      "downloadRtcs",
+      "mrDownloader",
+      "deedUploadMatch",
+      "surveyRecords",
+      "surveyBoundaryReport",
+      "signedRtcMrPack",
+    ],
+  },
+  {
+    id: "ops",
+    name: "Ops & Closing",
+    hint: "Portal health, registration readiness and admin",
+    workspaceIds: ["kaveriReadiness", "buyerActionTracker", "portalHealthMonitor", "admin"],
   },
 ];
 
@@ -165,10 +249,13 @@ const controls = {
   portalDownTicker: document.querySelector("#portalDownTicker"),
   activeWorkspaceName: document.querySelector("#activeWorkspaceName"),
   activeWorkspaceHint: document.querySelector("#activeWorkspaceHint"),
+  activeJourneyLabel: document.querySelector("#activeJourneyLabel"),
+  workspaceStrip: document.querySelector("#workspaceStrip"),
   landPanel: document.querySelector("#landPanel"),
   reportSurface: document.querySelector("#reportSurface"),
   reportActions: document.querySelector(".report-actions"),
   menu: document.querySelector("#reportMenu"),
+  parcelHubMenu: document.querySelector("#parcelHubMenu"),
   activeReportName: document.querySelector("#activeReportName"),
   status: document.querySelector("#status"),
   district: document.querySelector("#district"),
@@ -208,6 +295,9 @@ let sessionId = "";
 let currentState = null;
 let activeWorkspace = workspaces[0];
 let activeReport = reports[0];
+let shellMode = "home";
+let parcelHubMode = "services";
+let fieldMode = localStorage.getItem("ssvd-field-mode") === "1";
 let cachedReport = null;
 let cachedMrDownloader = null;
 let cachedVillageScan = null;
@@ -236,7 +326,20 @@ const featureWorkspaceIds = new Set([
   "villageRiskRadar",
   "portalHealthMonitor",
   "buyerActionTracker",
+  "conversionWatch",
+  "hobliPendencyDigest",
+  "signedRtcMrPack",
+  "changeDiffReport",
 ]);
+
+const officialDeepLinks = {
+  bhoomiMaps: "https://rdservices.karnataka.gov.in/BhoomiMaps/",
+  mojini: "https://bhoomojini.karnataka.gov.in/",
+  bhoomi: "https://landrecords.karnataka.gov.in/",
+  echawadi: "https://rdservices.karnataka.gov.in/echawadi/",
+  kaveri: "https://kaveri.karnataka.gov.in/",
+  rtcWallet: "https://rtc.karnataka.gov.in/",
+};
 
 function isAdminUser() {
   return Boolean(currentUser?.isAdmin);
@@ -254,8 +357,37 @@ function hasWorkspaceAccess(workspaceId) {
   return permittedWorkspaces().some((workspace) => workspace.id === workspaceId);
 }
 
+function isConversionWatchWorkspace() {
+  return activeWorkspace.id === "conversionWatch";
+}
+
+function isHobliPendencyWorkspace() {
+  return activeWorkspace.id === "hobliPendencyDigest";
+}
+
+function isSignedPackWorkspace() {
+  return activeWorkspace.id === "signedRtcMrPack";
+}
+
+function isChangeDiffWorkspace() {
+  return activeWorkspace.id === "changeDiffReport";
+}
+
 function usesLandDetails() {
-  return !isAdminWorkspace() && (isFullLegalWorkspace() || isAutoGenWorkspace() || isDailyMutationsWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace() || isSurveyBoundaryWorkspace());
+  return !isAdminWorkspace() && (
+    isFullLegalWorkspace()
+    || isAutoGenWorkspace()
+    || isDailyMutationsWorkspace()
+    || isMrDownloaderWorkspace()
+    || isDownloadRtcsWorkspace()
+    || isScanRtcsWorkspace()
+    || isVillageScanWorkspace()
+    || isKathaValidationWorkspace()
+    || isSurveyBoundaryWorkspace()
+    || isConversionWatchWorkspace()
+    || isHobliPendencyWorkspace()
+    || isSignedPackWorkspace()
+  );
 }
 
 function isFeatureWorkspace() {
@@ -263,7 +395,17 @@ function isFeatureWorkspace() {
 }
 
 function activeLocationSource() {
-  return (isVillageScanWorkspace() || isDailyMutationsWorkspace()) ? "echawadi" : "bhoomi";
+  return (
+    isVillageScanWorkspace()
+    || isDailyMutationsWorkspace()
+    || isConversionWatchWorkspace()
+    || isHobliPendencyWorkspace()
+  ) ? "echawadi" : "bhoomi";
+}
+
+function applyFieldMode() {
+  document.body.classList.toggle("field-mode", fieldMode);
+  localStorage.setItem("ssvd-field-mode", fieldMode ? "1" : "0");
 }
 
 function selectedText(control) {
@@ -319,7 +461,7 @@ function isPlaceholder(value = "") {
 }
 
 function hasRequiredInputs() {
-  if (isDailyMutationsWorkspace()) {
+  if (isDailyMutationsWorkspace() || isHobliPendencyWorkspace()) {
     return Boolean(
       sessionId
       && !isPlaceholder(controls.district.value)
@@ -327,7 +469,7 @@ function hasRequiredInputs() {
       && !isPlaceholder(controls.hobli.value),
     );
   }
-  if (isVillageScanWorkspace()) {
+  if (isVillageScanWorkspace() || isConversionWatchWorkspace()) {
     return Boolean(
       sessionId
       && !isPlaceholder(controls.district.value)
@@ -515,7 +657,26 @@ function clearCurrentUser() {
   controls.adminButton.hidden = true;
 }
 
+function journeyForWorkspace(workspaceId) {
+  return journeys.find((journey) => journey.workspaceIds.includes(workspaceId)) || null;
+}
+
+function workspacesForJourney(journey) {
+  const allowed = new Set(permittedWorkspaces().map((workspace) => workspace.id));
+  return (journey?.workspaceIds || [])
+    .map((id) => workspaces.find((workspace) => workspace.id === id))
+    .filter((workspace) => workspace && allowed.has(workspace.id));
+}
+
+function goHome() {
+  shellMode = "home";
+  closeMainMenu();
+  renderWorkspace();
+  setStatus("Home");
+}
+
 async function activateWorkspace(workspace) {
+  shellMode = "workspace";
   activeWorkspace = workspace;
   closeMainMenu();
   renderWorkspace();
@@ -548,6 +709,122 @@ function renderMenu() {
 
 function isFullLegalWorkspace() {
   return activeWorkspace.id === "fullLegalReport";
+}
+
+function renderParcelHubMenu() {
+  if (!controls.parcelHubMenu) return;
+  const show = shellMode === "workspace" && isFullLegalWorkspace();
+  controls.parcelHubMenu.hidden = !show;
+  if (!show) {
+    controls.parcelHubMenu.innerHTML = "";
+    return;
+  }
+  controls.parcelHubMenu.innerHTML = "";
+  for (const mode of parcelHubModes) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = mode.name;
+    button.title = mode.hint;
+    button.className = mode.id === parcelHubMode ? "active" : "";
+    button.addEventListener("click", () => {
+      parcelHubMode = mode.id;
+      renderWorkspace();
+      setStatus(`Parcel hub · ${mode.name}`);
+    });
+    controls.parcelHubMenu.append(button);
+  }
+}
+
+function renderParcelMapPane() {
+  const selected = values();
+  const links = [
+    { name: "BhoomiMaps / RTC with Sketch", url: officialDeepLinks.bhoomiMaps, note: "Open sketch / map view for the selected survey in the official portal." },
+    { name: "Mojini Survey", url: officialDeepLinks.mojini, note: "Survey applications, tippani and boundary records." },
+    { name: "Bhoomi Land Records", url: officialDeepLinks.bhoomi, note: "RTC, MR and ownership services." },
+    { name: "eChawadi", url: officialDeepLinks.echawadi, note: "Village mutations, conversions and pendency signals." },
+  ];
+  return baseFeatureShell("Parcel Map Links", "Official deep links for the sticky parcel selection", `
+    <section class="summary-block">
+      <div class="section-title"><h3>Selected parcel</h3><span>Match these values in the official portal</span></div>
+      ${featureTable(["Field", "Value"], [
+        ["District", selected.districtLabel || "-"],
+        ["Taluk", selected.talukLabel || "-"],
+        ["Hobli", selected.hobliLabel || "-"],
+        ["Village", selected.villageLabel || "-"],
+        ["Survey / Surnoc / Hissa", [selected.survey, selected.surnocLabel || selected.surnoc, selected.hissaLabel || selected.hissa].filter(Boolean).join(" / ") || "-"],
+      ])}
+    </section>
+    <section class="summary-block">
+      <div class="section-title"><h3>Map &amp; sketch portals</h3><span>Opens in a new tab</span></div>
+      <div class="map-link-grid">
+        ${links.map((link) => `
+          <a class="map-link-card" href="${escapeAttr(link.url)}" target="_blank" rel="noopener noreferrer">
+            <strong>${escapeHtml(link.name)}</strong>
+            <span>${escapeHtml(link.note)}</span>
+          </a>
+        `).join("")}
+      </div>
+    </section>
+  `, { hideManualEvidence: true });
+}
+
+function renderParcelHubKatha() {
+  if (cachedKathaValidation) {
+    renderKathaValidationReport(cachedKathaValidation);
+    return;
+  }
+  controls.reportOutput.innerHTML = baseFeatureShell(
+    "Katha Validation",
+    "Use the Katha workspace fetch, or validate from the Katha Validation report",
+    `
+      <section class="summary-block">
+        <p>No Katha validation result is loaded in this session yet.</p>
+        <p>Open <strong>Katha Validation</strong> from the menu, run Validate Katha, then return here — or stay on that workspace for the full fetch flow.</p>
+      </section>
+    `,
+    { hideManualEvidence: true },
+  );
+}
+
+function renderParcelHubContent() {
+  renderParcelHubMenu();
+  const showServiceTabs = parcelHubMode === "services";
+  controls.menu.hidden = !showServiceTabs;
+
+  if (parcelHubMode === "services") {
+    renderMenu();
+    controls.activeReportName.textContent = activeReport.name;
+    if (cachedReport) renderReport(cachedReport);
+    else renderEmptyService();
+    return;
+  }
+
+  const mode = parcelHubModes.find((item) => item.id === parcelHubMode);
+  controls.activeReportName.textContent = `Parcel Hub · ${mode?.name || parcelHubMode}`;
+
+  if (parcelHubMode === "evidence") {
+    controls.reportOutput.innerHTML = renderDueDiligenceDashboard();
+    return;
+  }
+  if (parcelHubMode === "gaps") {
+    controls.reportOutput.innerHTML = renderDocumentGapFinder();
+    return;
+  }
+  if (parcelHubMode === "score") {
+    renderScoreCard();
+    return;
+  }
+  if (parcelHubMode === "timeline") {
+    controls.reportOutput.innerHTML = renderTitleChainTimeline();
+    return;
+  }
+  if (parcelHubMode === "katha") {
+    renderParcelHubKatha();
+    return;
+  }
+  if (parcelHubMode === "map") {
+    controls.reportOutput.innerHTML = renderParcelMapPane();
+  }
 }
 
 function isAutoGenWorkspace() {
@@ -592,13 +869,31 @@ function isAdminWorkspace() {
 
 function renderWorkspaceMenu() {
   controls.mainMenuPanel.innerHTML = "";
-  for (const workspace of permittedWorkspaces()) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = workspace.name;
-    button.className = workspace.id === activeWorkspace.id ? "active" : "";
-    button.addEventListener("click", () => activateWorkspace(workspace));
-    controls.mainMenuPanel.append(button);
+
+  const homeButton = document.createElement("button");
+  homeButton.type = "button";
+  homeButton.textContent = "Home";
+  homeButton.className = shellMode === "home" ? "active" : "";
+  homeButton.addEventListener("click", () => goHome());
+  controls.mainMenuPanel.append(homeButton);
+
+  for (const journey of journeys) {
+    const items = workspacesForJourney(journey);
+    if (!items.length) continue;
+
+    const label = document.createElement("p");
+    label.className = "menu-journey-label";
+    label.textContent = journey.name;
+    controls.mainMenuPanel.append(label);
+
+    for (const workspace of items) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = workspace.name;
+      button.className = shellMode === "workspace" && workspace.id === activeWorkspace.id ? "active" : "";
+      button.addEventListener("click", () => activateWorkspace(workspace));
+      controls.mainMenuPanel.append(button);
+    }
   }
 }
 
@@ -727,11 +1022,17 @@ function featureTable(headers, rows) {
   `;
 }
 
+function featureNotesKey() {
+  if (isFullLegalWorkspace() && parcelHubMode !== "services") return `parcelHub:${parcelHubMode}`;
+  return activeWorkspace.id;
+}
+
 function manualEvidencePanel() {
+  const notesKey = featureNotesKey();
   return `
     <section class="summary-block feature-manual-panel">
       <div class="section-title"><h3>Manual Evidence</h3><span>Optional notes for validation</span></div>
-      <label><span>Paste observations, document numbers, EC notes or lawyer comments</span><textarea data-feature-notes rows="4" placeholder="Example: EC checked from 1995-2026, MR 49 linked with sale deed, boundary verified on site...">${escapeHtml(cachedFeatureReports[activeWorkspace.id]?.notes || "")}</textarea></label>
+      <label><span>Paste observations, document numbers, EC notes or lawyer comments</span><textarea data-feature-notes rows="4" placeholder="Example: EC checked from 1995-2026, MR 49 linked with sale deed, boundary verified on site...">${escapeHtml(cachedFeatureReports[notesKey]?.notes || "")}</textarea></label>
       <button type="button" data-feature-action="save-notes">Save Notes</button>
     </section>
   `;
@@ -806,11 +1107,33 @@ function renderDocumentGapFinder() {
 }
 
 function renderTitleChainTimeline() {
-  const rows = ownershipChainRows(cachedReport?.rtcRows || []);
+  const rtcRows = cachedReport?.rtcRows || [];
+  const rows = ownershipChainRows(rtcRows);
+  const nodes = ownershipChangeNodes(rtcRows);
   return baseFeatureShell("Title Chain Timeline", "Owner and extent flow from RTC/MR evidence", `
     <section class="summary-block">
       ${rows.length ? featureTable(["Step", "Period", "Owner(s)", "Extent", "Khatha"], rows) : "<p>No RTC ownership rows are available yet. Generate Full Legal Report or Download RTCs first.</p>"}
     </section>
+    ${nodes.length ? `
+      <section class="summary-block title-timeline-visual">
+        <div class="section-title"><h3>Visual title chain</h3><span>${nodes.length} ownership step(s)</span></div>
+        <ol class="title-timeline">
+          ${nodes.map((node, index) => `
+            <li class="title-timeline-step">
+              <div class="title-timeline-marker" aria-hidden="true">${index + 1}</div>
+              <div class="title-timeline-card">
+                <strong>${escapeHtml(node.years.length ? yearRangeText(node.years) : "Current stage")}</strong>
+                <ul class="owner-list">
+                  ${node.owners.map((owner) => `<li>${escapeHtml(owner)}</li>`).join("") || "<li>-</li>"}
+                </ul>
+                <span>${escapeHtml([...new Set(node.rows.flatMap((row) => row.extents || []))].filter(Boolean).join("; ") || "Extent not listed")}</span>
+                <em>Khatha: ${escapeHtml([...new Set(node.rows.map((row) => row.khataNumber).filter(Boolean))].join("; ") || "-")}</em>
+              </div>
+            </li>
+          `).join("")}
+        </ol>
+      </section>
+    ` : ""}
   `);
 }
 
@@ -1005,9 +1328,15 @@ function trackerState() {
 function renderBuyerActionTracker() {
   const state = trackerState();
   const verified = Object.values(state.tasks).filter((status) => status === "Verified" || status === "Not Applicable").length;
-  const scoreRows = cachedScoreCard?.answers ? allScoreRows(cachedScoreCard.answers).slice(0, 20).map((row) => [row.section, row.question, row.status]) : [];
+  const progress = buyerTasks.length ? Math.round((verified / buyerTasks.length) * 100) : 0;
+  const scoreRows = cachedScoreCard?.answers ? allScoreRows(cachedScoreCard.answers).slice(0, 20).map((row) => [row.section, row.label, row.choice]) : [];
   return baseFeatureShell("Buyer Action Tracker", `${verified}/${buyerTasks.length} items verified or not applicable`, `
-    <section class="summary-block">
+    <section class="summary-block buyer-board">
+      <div class="section-title"><h3>Closing board</h3><span>${progress}% ready</span></div>
+      <div class="buyer-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}" aria-label="Buyer checklist progress">
+        <div class="buyer-progress-bar" style="width:${progress}%"></div>
+      </div>
+      <p class="buyer-progress-label">${verified} of ${buyerTasks.length} tasks verified or not applicable</p>
       <table>
         <thead><tr><th>Task</th><th>Status</th></tr></thead>
         <tbody>
@@ -1023,8 +1352,120 @@ function renderBuyerActionTracker() {
       <button type="button" data-feature-action="save-tracker">Save Tracker Status</button>
       ${state.savedAt ? `<p class="saved-report-note">Last saved in this session: ${escapeHtml(new Date(state.savedAt).toLocaleString())}</p>` : ""}
     </section>
-    ${scoreRows.length ? `<section class="summary-block">${featureTable(["Score Section", "Checklist Item", "Score Status"], scoreRows)}</section>` : ""}
+    ${scoreRows.length ? `<section class="summary-block">${featureTable(["Score Section", "Checklist Item", "Score Choice"], scoreRows)}</section>` : ""}
   `);
+}
+
+function conversionWatchTables() {
+  return (cachedVillageScan?.tables || []).filter((table) => /convert|land use|ಭೂಪರಿವರ್ತನ|alien|site plan|zoning/i.test(table.title || ""));
+}
+
+function renderConversionWatch() {
+  const tables = conversionWatchTables();
+  const fallbackTables = tables.length ? tables : (cachedVillageScan?.tables || []);
+  const echawadi = latestReportSections().find((section) => section.title === "eChawadi");
+  const legalRows = (echawadi?.records || [])
+    .filter((record) => /convert|alien|land use|ಭೂಪರಿವರ್ತನ|site/i.test(`${record.label || ""} ${JSON.stringify(record.summary || {})}`))
+    .map((record) => [
+      record.label || "-",
+      record.summary?.hasData ? "Signal found" : "No structured match",
+      (record.summary?.rows || []).slice(0, 3).map((row) => row.join(" | ")).join("\n") || record.summary?.text || "-",
+    ]);
+  return baseFeatureShell("Conversion Watch", "Land-conversion and related eChawadi signals", `
+    <section class="summary-block">
+      <div class="section-title"><h3>Session sources</h3><span>Reuses Village Scan / Full Legal eChawadi</span></div>
+      ${featureTable(["Source", "Status"], [
+        ["Village Scan", cachedVillageScan ? fetchedLabel(cachedVillageScan) : "Not fetched"],
+        ["Full Legal eChawadi", hasFetchedSection("eChawadi") ? "Available" : "Not fetched"],
+      ])}
+      <p>Click <strong>Fetch Data</strong> above to refresh Village Scan for the selected village. Existing Daily Mutations APIs are unchanged.</p>
+    </section>
+    ${fallbackTables.length ? fallbackTables.map(renderVillageTable).join("") : "<section class=\"summary-block\"><p>No village conversion tables are loaded yet.</p></section>"}
+    ${legalRows.length ? `<section class="summary-block"><div class="section-title"><h3>Full Legal eChawadi signals</h3><span>${legalRows.length} matched record(s)</span></div>${featureTable(["Area", "Status", "Evidence"], legalRows)}</section>` : ""}
+  `, { hideManualEvidence: false });
+}
+
+function renderHobliPendencyDigest() {
+  const overview = cachedDailyMutations?.overview || {};
+  const villages = cachedDailyMutations?.villages || [];
+  const withMutations = villages.filter((item) => (item.mutations || []).length > 0).length;
+  const links = [
+    { name: "eChawadi portal", url: officialDeepLinks.echawadi, note: "Official mutation and pendency dashboards" },
+    { name: "Bhoomi land records", url: officialDeepLinks.bhoomi, note: "RTC / MR cross-check" },
+    { name: "Kaveri", url: officialDeepLinks.kaveri, note: "Registration and EC readiness" },
+  ];
+  return baseFeatureShell("Hobli Pendency Digest", "Hobli mutation snapshot plus official pendency links", `
+    <section class="summary-block">
+      <div class="section-title"><h3>Latest Daily Mutations snapshot</h3><span>${cachedDailyMutations ? fetchedLabel(cachedDailyMutations) : "Not generated"}</span></div>
+      ${featureTable(["Field", "Value"], [
+        ["District", overview.district || values().districtLabel || "-"],
+        ["Taluk", overview.taluk || values().talukLabel || "-"],
+        ["Hobli", overview.hobli || values().hobliLabel || "-"],
+        ["Villages scanned", String(overview.villagesScanned ?? "-")],
+        ["Mutations found", String(overview.totalMutations ?? "-")],
+        ["Villages with mutations", cachedDailyMutations ? String(withMutations) : "-"],
+      ])}
+      <p>Click <strong>Fetch Data</strong> to generate/refresh the hobli Daily Mutations report (same backend as Daily Mutations Report).</p>
+    </section>
+    <section class="summary-block">
+      <div class="section-title"><h3>Official pendency links</h3><span>Open and filter by hobli/village</span></div>
+      <div class="map-link-grid">
+        ${links.map((link) => `
+          <a class="map-link-card" href="${escapeAttr(link.url)}" target="_blank" rel="noopener noreferrer">
+            <strong>${escapeHtml(link.name)}</strong>
+            <span>${escapeHtml(link.note)}</span>
+          </a>
+        `).join("")}
+      </div>
+    </section>
+  `, { hideManualEvidence: true });
+}
+
+function renderSignedRtcMrPack() {
+  const checklist = [
+    ["Digitally signed current RTC", hasFetchedSection("Current Year RTC") ? "Fetched in session" : "Need to Check", "Prefer i-RTC / wallet signed copy for bank/court packs."],
+    ["Digitally signed old RTC coverage", (cachedReport?.rtcRows || []).some((row) => row.type === "Old RTC") ? "Fetched rows present" : "Need to Check", "Cover enough years for title chain."],
+    ["MR extracts for ownership changes", hasFetchedSection("Mutation Register") ? "Fetched in session" : "Need to Check", "Every ownership/extent change needs linked MR."],
+    ["Wallet / signed portal download", "Need to Check", "Download from rtc.karnataka.gov.in or official signed RTC/MR service."],
+    ["Print pack cover + TOC", "Ready in Full Legal print", "Use Print Report on Full Legal for cover and contents."],
+  ];
+  const links = [
+    { name: "i-RTC / Wallet", url: officialDeepLinks.rtcWallet, note: "Digitally signed RTC wallet downloads" },
+    { name: "Bhoomi land records", url: officialDeepLinks.bhoomi, note: "RTC and MR services" },
+    { name: "BhoomiMaps sketch", url: officialDeepLinks.bhoomiMaps, note: "Attach sketch with the signed pack" },
+  ];
+  return baseFeatureShell("Signed RTC / MR Pack", "Bank/court-ready checklist and signed-portal deep links", `
+    <section class="summary-block">${featureTable(["Checklist", "Status", "Validation"], checklist)}</section>
+    <section class="summary-block">
+      <div class="section-title"><h3>Signed document portals</h3><span>Opens in a new tab</span></div>
+      <div class="map-link-grid">
+        ${links.map((link) => `
+          <a class="map-link-card" href="${escapeAttr(link.url)}" target="_blank" rel="noopener noreferrer">
+            <strong>${escapeHtml(link.name)}</strong>
+            <span>${escapeHtml(link.note)}</span>
+          </a>
+        `).join("")}
+      </div>
+    </section>
+  `);
+}
+
+function renderChangeDiffReport() {
+  if (!loadedSavedReportState) {
+    return baseFeatureShell("Change Diff Report", "Compare a saved pack with the current session", `
+      <section class="summary-block">
+        <p>No saved report is loaded for comparison yet.</p>
+        <p>Use <strong>Saved Reports</strong> to load a previous pack, then refetch current data and reopen this report.</p>
+      </section>
+    `, { hideManualEvidence: true });
+  }
+  const rows = compareSavedWithCurrent(loadedSavedReportState, currentReportDataStore());
+  return baseFeatureShell("Change Diff Report", "Saved pack vs current session counts", `
+    <section class="summary-block">
+      <div class="section-title"><h3>Diff summary</h3><span>Saved at ${escapeHtml(loadedSavedReportState.savedAt ? new Date(loadedSavedReportState.savedAt).toLocaleString() : "-")}</span></div>
+      ${featureTable(["Service", "Previous Fetch", "Current Fetch", "Previous Count", "Current Count", "Validation"], rows)}
+    </section>
+  `, { hideManualEvidence: false });
 }
 
 function renderFeatureWorkspace() {
@@ -1041,12 +1482,17 @@ function renderFeatureWorkspace() {
     surveyBoundaryReport: renderSurveyBoundaryReport,
     villageRiskRadar: renderVillageRiskRadar,
     buyerActionTracker: renderBuyerActionTracker,
+    conversionWatch: renderConversionWatch,
+    hobliPendencyDigest: renderHobliPendencyDigest,
+    signedRtcMrPack: renderSignedRtcMrPack,
+    changeDiffReport: renderChangeDiffReport,
   };
   controls.reportOutput.innerHTML = (htmlById[activeWorkspace.id] || (() => renderWorkspacePlaceholder()))();
 }
 
 async function handleFeatureAction(event) {
-  if (!isFeatureWorkspace()) return;
+  const hubFeature = isFullLegalWorkspace() && ["evidence", "gaps", "timeline", "map", "katha"].includes(parcelHubMode);
+  if (!isFeatureWorkspace() && !hubFeature) return;
 
   const trackerSelect = event.target.closest("select[data-tracker-task]");
   if (trackerSelect) {
@@ -1061,10 +1507,12 @@ async function handleFeatureAction(event) {
 
   const action = button.dataset.featureAction;
   if (action === "save-notes") {
-    cachedFeatureReports[activeWorkspace.id] ||= {};
-    cachedFeatureReports[activeWorkspace.id].notes = controls.reportOutput.querySelector("[data-feature-notes]")?.value || "";
+    const notesKey = featureNotesKey();
+    cachedFeatureReports[notesKey] ||= {};
+    cachedFeatureReports[notesKey].notes = controls.reportOutput.querySelector("[data-feature-notes]")?.value || "";
     setExportAvailability();
-    renderFeatureWorkspace();
+    if (hubFeature) renderParcelHubContent();
+    else renderFeatureWorkspace();
     setStatus("Validation notes saved");
     return;
   }
@@ -1107,35 +1555,192 @@ async function handleFeatureAction(event) {
   }
 }
 
+function quickWorkspace(id) {
+  return permittedWorkspaces().find((workspace) => workspace.id === id) || null;
+}
+
+function homeParcelSummary() {
+  const selected = values();
+  const parts = [
+    selected.districtLabel,
+    selected.talukLabel,
+    selected.hobliLabel,
+    selected.villageLabel,
+    selected.survey,
+  ].filter((part) => part && !isPlaceholder(part));
+  return parts.length ? parts.join(" · ") : "No parcel selected yet";
+}
+
+function homeDailySummary() {
+  if (!cachedDailyMutations) return "No daily report generated in this session";
+  const overview = cachedDailyMutations.overview || {};
+  return `${overview.hobli || "Hobli"} · ${overview.villagesScanned || 0} villages · ${overview.totalMutations || 0} mutations`;
+}
+
+function homePortalSummary() {
+  const report = cachedFeatureReports.portalHealthMonitor;
+  if (!report?.results?.length) return "Portal health not checked yet";
+  const down = report.results.filter((item) => !item.ok).length;
+  const total = report.results.length;
+  return down ? `${down}/${total} portals reporting issues` : `All ${total} checked portals online`;
+}
+
+function renderHomeCommandCenter() {
+  const allowed = permittedWorkspaces();
+  const shortcuts = [
+    quickWorkspace("fullLegalReport"),
+    quickWorkspace("landAutoGenReport"),
+    quickWorkspace("dailyMutationsReport"),
+    quickWorkspace("villageScan"),
+    quickWorkspace("portalHealthMonitor"),
+  ].filter(Boolean);
+
+  if (controls.activeJourneyLabel) controls.activeJourneyLabel.textContent = "Home";
+  controls.activeWorkspaceName.textContent = "Command Center";
+  controls.activeWorkspaceHint.textContent = "Open a journey from the menu. Existing report APIs and data paths are unchanged.";
+  controls.landPanel.hidden = true;
+  controls.menu.hidden = true;
+  if (controls.parcelHubMenu) controls.parcelHubMenu.hidden = true;
+  controls.reportActions.hidden = true;
+  controls.activeReportName.textContent = "Home";
+  document.body.classList.remove("secondary-workspace", "village-workspace", "hobli-workspace", "sticky-land-active");
+  applyFieldMode();
+
+  controls.reportOutput.innerHTML = `
+    <div class="home-command-center">
+      <section class="home-hero summary-block">
+        <p class="eyebrow">Sri SatVam · SSVD Report Store</p>
+        <h3>Land due-diligence and daily mutation intel</h3>
+        <p>Use journeys in the menu. Parcel selection stays sticky when you open parcel or area reports.</p>
+        <div class="home-field-toggle">
+          <button type="button" class="secondary-button" data-home-action="toggle-field-mode">${fieldMode ? "Exit field mode" : "Enable field mode"}</button>
+          <span>Larger tap targets and simplified chrome for on-site use.</span>
+        </div>
+      </section>
+      <section class="home-stats">
+        <article class="home-stat-card">
+          <span>Assigned reports</span>
+          <strong>${allowed.length}</strong>
+        </article>
+        <article class="home-stat-card">
+          <span>Selected parcel</span>
+          <strong>${escapeHtml(homeParcelSummary())}</strong>
+        </article>
+        <article class="home-stat-card">
+          <span>Daily Mutations</span>
+          <strong>${escapeHtml(homeDailySummary())}</strong>
+        </article>
+        <article class="home-stat-card">
+          <span>Portal health</span>
+          <strong>${escapeHtml(homePortalSummary())}</strong>
+        </article>
+      </section>
+      <section class="summary-block">
+        <div class="section-title"><h3>Quick open</h3><span>Same workspaces and backends as before</span></div>
+        <div class="home-shortcut-grid">
+          ${shortcuts.map((workspace) => `
+            <button type="button" class="home-shortcut" data-home-workspace="${escapeHtml(workspace.id)}">
+              <strong>${escapeHtml(workspace.name)}</strong>
+              <span>${escapeHtml(workspace.hint)}</span>
+            </button>
+          `).join("") || "<p>No reports are assigned to this login yet.</p>"}
+        </div>
+      </section>
+      <section class="summary-block">
+        <div class="section-title"><h3>Journeys</h3><span>Grouped navigation only</span></div>
+        <div class="home-journey-grid">
+          ${journeys.map((journey) => {
+            const count = workspacesForJourney(journey).length;
+            if (!count) return "";
+            return `
+              <article class="home-journey-card">
+                <strong>${escapeHtml(journey.name)}</strong>
+                <span>${escapeHtml(journey.hint)}</span>
+                <em>${count} report${count === 1 ? "" : "s"} available</em>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+
+  for (const button of controls.reportOutput.querySelectorAll("[data-home-workspace]")) {
+    button.addEventListener("click", () => {
+      const workspace = workspaces.find((item) => item.id === button.getAttribute("data-home-workspace"));
+      if (workspace) activateWorkspace(workspace);
+    });
+  }
+  const fieldToggle = controls.reportOutput.querySelector("[data-home-action='toggle-field-mode']");
+  if (fieldToggle) {
+    fieldToggle.addEventListener("click", () => {
+      fieldMode = !fieldMode;
+      applyFieldMode();
+      renderHomeCommandCenter();
+      setStatus(fieldMode ? "Field mode on" : "Field mode off");
+    });
+  }
+}
+
 function renderWorkspace() {
   const allowed = permittedWorkspaces();
   if (!allowed.length) {
+    shellMode = "home";
+    if (controls.activeJourneyLabel) controls.activeJourneyLabel.textContent = "Home";
     controls.activeWorkspaceName.textContent = "No Reports Assigned";
     controls.activeWorkspaceHint.textContent = "Please contact admin for report access.";
     controls.landPanel.hidden = true;
     controls.reportActions.hidden = true;
     controls.menu.hidden = true;
+    if (controls.parcelHubMenu) controls.parcelHubMenu.hidden = true;
+    document.body.classList.remove("sticky-land-active");
     controls.reportOutput.innerHTML = `<div class="empty-state"><strong>No reports assigned</strong><span>Please contact admin to enable report access for your login.</span></div>`;
     return;
   }
+  renderWorkspaceMenu();
+  applyFieldMode();
+
+  if (shellMode === "home") {
+    renderHomeCommandCenter();
+    return;
+  }
+
   if (!hasWorkspaceAccess(activeWorkspace.id)) activeWorkspace = allowed[0];
+  const journey = journeyForWorkspace(activeWorkspace.id);
+  if (controls.activeJourneyLabel) controls.activeJourneyLabel.textContent = journey?.name || "Reports";
   controls.activeWorkspaceName.textContent = activeWorkspace.name;
   controls.activeWorkspaceHint.textContent = activeWorkspace.hint;
-  renderWorkspaceMenu();
   document.body.classList.toggle("secondary-workspace", !isFullLegalWorkspace());
-  document.body.classList.toggle("village-workspace", isVillageScanWorkspace() || isDailyMutationsWorkspace());
-  document.body.classList.toggle("hobli-workspace", isDailyMutationsWorkspace());
+  document.body.classList.toggle(
+    "village-workspace",
+    isVillageScanWorkspace() || isDailyMutationsWorkspace() || isConversionWatchWorkspace() || isHobliPendencyWorkspace(),
+  );
+  document.body.classList.toggle("hobli-workspace", isDailyMutationsWorkspace() || isHobliPendencyWorkspace());
   const landDetailsVisible = usesLandDetails();
   controls.landPanel.hidden = !landDetailsVisible;
-  controls.menu.hidden = !isFullLegalWorkspace();
+  document.body.classList.toggle("sticky-land-active", landDetailsVisible);
+  if (!isFullLegalWorkspace() && controls.parcelHubMenu) controls.parcelHubMenu.hidden = true;
+  controls.menu.hidden = !(isFullLegalWorkspace() && parcelHubMode === "services");
   controls.reportActions.hidden = !(isFullLegalWorkspace() || isAutoGenWorkspace() || isDailyMutationsWorkspace() || isScoreCardWorkspace() || isFeatureWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace());
   controls.exportData.hidden = !isFullLegalWorkspace();
   controls.print.hidden = !(isFullLegalWorkspace() || isAutoGenWorkspace() || isDailyMutationsWorkspace() || isScoreCardWorkspace() || isFeatureWorkspace() || isMrDownloaderWorkspace() || isDownloadRtcsWorkspace() || isScanRtcsWorkspace() || isVillageScanWorkspace() || isKathaValidationWorkspace());
   controls.print.textContent = isAutoGenWorkspace() ? "Download Report" : "Print Report";
-  controls.fetchReport.textContent = isAutoGenWorkspace() ? "Generate Automated Report" : (isDailyMutationsWorkspace() ? "Generate Daily Report" : (isVillageScanWorkspace() ? "Fetch Village Data" : (isKathaValidationWorkspace() ? "Validate Katha" : (isSurveyBoundaryWorkspace() ? "Fetch Mojini Records" : (isDownloadRtcsWorkspace() ? "Download RTCs" : (isScanRtcsWorkspace() ? "Scan RTCs" : "Fetch Data"))))));
-  controls.survey.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace());
-  controls.surnoc.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace());
-  controls.hissa.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace());
+  controls.fetchReport.textContent = isAutoGenWorkspace()
+    ? "Generate Automated Report"
+    : (isDailyMutationsWorkspace() || isHobliPendencyWorkspace()
+      ? "Generate Daily Report"
+      : (isVillageScanWorkspace() || isConversionWatchWorkspace()
+        ? "Fetch Village Data"
+        : (isKathaValidationWorkspace()
+          ? "Validate Katha"
+          : (isSurveyBoundaryWorkspace()
+            ? "Fetch Mojini Records"
+            : (isDownloadRtcsWorkspace()
+              ? "Download RTCs"
+              : (isScanRtcsWorkspace() ? "Scan RTCs" : "Fetch Data"))))));
+  controls.survey.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace() || isConversionWatchWorkspace() || isHobliPendencyWorkspace());
+  controls.surnoc.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace() || isConversionWatchWorkspace() || isHobliPendencyWorkspace());
+  controls.hissa.required = !(isVillageScanWorkspace() || isDailyMutationsWorkspace() || isConversionWatchWorkspace() || isHobliPendencyWorkspace());
   if (currentState) restoreDisabled(currentState);
   setExportAvailability();
 
@@ -1155,10 +1760,7 @@ function renderWorkspace() {
   }
 
   if (isFullLegalWorkspace()) {
-    renderMenu();
-    controls.activeReportName.textContent = activeReport.name;
-    if (cachedReport) renderReport(cachedReport);
-    else renderEmptyService();
+    renderParcelHubContent();
     return;
   }
 
@@ -2765,7 +3367,8 @@ function renderScoreCardReport(state, results, overall) {
 }
 
 function handleScoreCardAction(event) {
-  if (!isScoreCardWorkspace()) return;
+  const hubScore = isFullLegalWorkspace() && parcelHubMode === "score";
+  if (!isScoreCardWorkspace() && !hubScore) return;
   const input = event.target.closest("input[type='radio'][name^='score-']");
   if (input) {
     const itemId = input.name.replace(/^score-/, "");
@@ -3410,12 +4013,22 @@ function buildPrintReport() {
     "landIssues",
     "advancedDetails",
   ];
+  const tocItems = [
+    "Land Details",
+    ...printOrder.map((id) => reports.find((item) => item.id === id)?.name).filter(Boolean),
+  ];
   return `
     <article class="print-document">
-      <header class="print-title">
-        <h1>SSVD Land Report</h1>
-        <p>Combined printable report generated from fetched service data.</p>
+      <header class="print-title print-cover">
+        <p class="print-brand">Sri SatVam · SSVD Report Store</p>
+        <h1>Full Legal Land Pack</h1>
+        <p>${escapeHtml(currentLandLabel())}</p>
+        <p>Combined printable report generated ${escapeHtml(new Date().toLocaleString())}</p>
       </header>
+      <section class="print-section print-toc">
+        <h2>Contents</h2>
+        <ol>${tocItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol>
+      </section>
       ${printLandDetails(cachedReport)}
       ${printOrder.map(renderReportForPrint).join("")}
     </article>
@@ -3748,8 +4361,9 @@ async function fetchVillageScanData() {
   try {
     cachedVillageScan = await api("/api/village-scan", { sessionId, values: values() });
     cachedVillageScan.fetchedAt = new Date().toISOString();
-    renderVillageScanReport(cachedVillageScan);
-    setStatus("Village Scan data ready");
+    setExportAvailability();
+    renderWorkspace();
+    setStatus(isConversionWatchWorkspace() ? "Conversion Watch data ready" : "Village Scan data ready");
   } catch (error) {
     cachedVillageScan = null;
     controls.reportOutput.innerHTML = `<div class="error-card">${escapeHtml(error.message)}</div>`;
@@ -3771,8 +4385,12 @@ async function fetchDailyMutationsData() {
     cachedDailyMutations = await api("/api/daily-mutations-report", { sessionId, values: values() });
     cachedDailyMutations.fetchedAt = new Date().toISOString();
     setExportAvailability();
-    renderDailyMutationsReport(cachedDailyMutations);
-    setStatus(`Daily Mutations Report ready: ${cachedDailyMutations.overview?.totalMutations || 0} mutation(s) found`);
+    renderWorkspace();
+    setStatus(
+      isHobliPendencyWorkspace()
+        ? `Hobli Pendency Digest ready: ${cachedDailyMutations.overview?.totalMutations || 0} mutation(s) found`
+        : `Daily Mutations Report ready: ${cachedDailyMutations.overview?.totalMutations || 0} mutation(s) found`,
+    );
   } catch (error) {
     cachedDailyMutations = null;
     controls.reportOutput.innerHTML = `<div class="error-card">${escapeHtml(error.message)}</div>`;
@@ -3834,7 +4452,7 @@ async function fetchAllData(event) {
     await fetchAutoGenReport();
     return;
   }
-  if (isDailyMutationsWorkspace()) {
+  if (isDailyMutationsWorkspace() || isHobliPendencyWorkspace()) {
     await fetchDailyMutationsData();
     return;
   }
@@ -3850,7 +4468,7 @@ async function fetchAllData(event) {
     await fetchScanRtcsData();
     return;
   }
-  if (isVillageScanWorkspace()) {
+  if (isVillageScanWorkspace() || isConversionWatchWorkspace()) {
     await fetchVillageScanData();
     return;
   }
@@ -4007,7 +4625,10 @@ function applySavedReportState(saved) {
     if (controls[key]) controls[key].value = land[key] || "";
   }
   const workspace = workspaces.find((item) => item.id === state.activeWorkspaceId && hasWorkspaceAccess(item.id));
-  if (workspace) activeWorkspace = workspace;
+  if (workspace) {
+    activeWorkspace = workspace;
+    shellMode = "workspace";
+  }
   const report = reports.find((item) => item.id === state.activeReportId);
   if (report) activeReport = report;
   setExportAvailability();
@@ -4221,9 +4842,9 @@ controls.loginForm.addEventListener("submit", async (event) => {
     saveCurrentUser(result.user);
     controls.loginError.textContent = "";
     showLoggedIn(true);
+    shellMode = "home";
     renderWorkspace();
-    if (usesLandDetails()) await start();
-    else setStatus(activeWorkspace.status || "Ready");
+    setStatus("Home");
   } catch (error) {
     controls.loginError.textContent = error.message || "Invalid user name or password.";
   }
@@ -4268,9 +4889,9 @@ try {
   if (savedUser?.username) {
     saveCurrentUser(savedUser);
     showLoggedIn(true);
+    shellMode = "home";
     renderWorkspace();
-    if (usesLandDetails()) await start();
-    else setStatus(activeWorkspace.status || "Ready");
+    setStatus("Home");
   } else {
     showLoggedIn(false);
   }

@@ -4,16 +4,21 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>SSVD Report Store</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Noto+Sans+Kannada:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main class="login-view" id="loginView">
+      <section class="login-hero" aria-hidden="true"></section>
       <section class="login-panel">
         <div class="login-brand">
           <img src="/srisatvam-logo.png" alt="Sri SatVam logo">
           <div>
-            <p>SSVD Report Store</p>
-            <h1>Secure Reports</h1>
+            <p>Sri SatVam Technologies</p>
+            <h1>SSVD Report Store</h1>
+            <span class="login-tagline">Karnataka land due-diligence &amp; daily mutation intel</span>
           </div>
         </div>
         <form id="loginForm" class="login-form">
@@ -84,18 +89,18 @@
           </div>
         </header>
 
-        <section class="workspace-strip">
+        <section class="workspace-strip" id="workspaceStrip">
           <div>
-            <p class="eyebrow">Main Menu</p>
-            <h2 id="activeWorkspaceName">Full Legal Report</h2>
+            <p class="eyebrow" id="activeJourneyLabel">Home</p>
+            <h2 id="activeWorkspaceName">Command Center</h2>
           </div>
-          <span id="activeWorkspaceHint">Complete legal report workspace with all fetched service tabs.</span>
+          <span id="activeWorkspaceHint">Choose a report journey or open a saved land pack.</span>
         </section>
 
-        <section class="land-panel" id="landPanel">
+        <section class="land-panel sticky-land" id="landPanel" hidden>
           <div class="section-title">
             <h2>Land Details</h2>
-            <span>Select once, then fetch all service data</span>
+            <span>Sticky selection shared across parcel reports</span>
           </div>
           <form id="recordForm" class="land-form">
             <label for="district">
@@ -149,6 +154,7 @@
               <button id="print" type="button">Print Report</button>
             </div>
           </div>
+          <nav id="parcelHubMenu" class="parcel-hub-tabs" aria-label="Parcel hub modes" hidden></nav>
           <nav id="reportMenu" class="service-tabs" aria-label="Service tabs"></nav>
           <div id="reportOutput" class="report-output"></div>
         </section>
